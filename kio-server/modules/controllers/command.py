@@ -45,7 +45,7 @@ def run() -> str:
     for device in the_devices:
         device.conn = conn
         device.cursor = cursor
-        if not device.cmd(cmd_url):
+        if not device.cmd(cmd_url, "manual"):
             success = False
 
     return redirect('/command/')

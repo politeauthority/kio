@@ -48,6 +48,12 @@ class Base:
             return "<%s: %s>" % (self.__class__.__name__, self.id)
         return "<%s>" % self.__class__.__name__
 
+    def connect(self, conn, cursor):
+        """Quick bootstrap method to connect the model to the database connection. """
+        self.conn = conn
+        self.cursor = cursor
+        return True
+
     def create_table(self) -> bool:
         """Create a table based on the self.table_name, and self.field_map.
            @unit-tested
@@ -162,10 +168,8 @@ class Base:
         return True
 
     def build_from_list(self, raw: list) -> bool:
-        """
-           Build a model from an ordered list, converting data types to their desired type where
+        """Build a model from an ordered list, converting data types to their desired type where 
            possible.
-           @unit-tested
            :param raw: The raw data from the database to be converted to model data.
         """
         count = 0
@@ -332,10 +336,7 @@ class Base:
         return True
 
     def _set_types(self) -> bool:
-        """
-           Set the types of class table field vars and corrects their types where possible.
-           @unit-tested
-        """
+        """Set the types of class table field vars and corrects their types where possible."""
         for field in self.total_map:
             class_var_name = field['name']
 
@@ -354,6 +355,7 @@ class Base:
             #     continue
 
             if field['type'] == 'datetime' and type(class_var_value) != datetime:
+                print(field)
                 setattr(
                     self,
                     class_var_name,

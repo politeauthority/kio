@@ -15,6 +15,10 @@ class Playlist(BaseEntityMeta):
             {
                 'name': 'name',
                 'type': 'str'
+            },
+            {
+                'name': 'urls',
+                'type': 'str'
             }
         ]
         self.setup()

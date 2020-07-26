@@ -31,3 +31,9 @@ Setup the kio-server app to run on boot. In `/etc/rc.local` set gunicorn to run 
 ```
 su pi -c 'cd /home/pi/kio/kio-server && export KIO_SERVER_CONFIG="prod" && gunicorn kio-server:app -b0.0.0.0:8000 --daemon'
 ```
+
+Setup the kio-server cron job which manages scheduling displays and other house keeping.
+
+```console
+*/2 * * * * python3 /home/pi/kio/kio-server/cron.py >/dev/null 2>&1
+```
