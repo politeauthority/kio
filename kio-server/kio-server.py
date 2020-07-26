@@ -22,6 +22,7 @@ else:
     app.config.from_object('config.default')
     print('Using config: default')
 
+
 @app.teardown_appcontext
 def close_connection(exception):
     db = getattr(g, '_database', None)
@@ -39,13 +40,13 @@ def index() -> str:
     print("\n")
     x = db.get_db_flask(app.config['KIO_SERVER_DB'])
     print(x)
-    print
-    return render_template('dashboard.html')
 
+    
 def register_blueprints(app: Flask):
     """Connect the blueprints to the router."""
     app.register_blueprint(ctrl_devices)
     app.register_blueprint(ctrl_command)
+
 
 register_blueprints(app)
 

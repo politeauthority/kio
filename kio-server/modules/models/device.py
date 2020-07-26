@@ -51,6 +51,7 @@ class Device(Base):
         dc.command = url
 
         device_url = "%s/set-display" % self.address
+
         payload = {
             'url': url
         }
