@@ -1,0 +1,69 @@
+<!-- Device Info -->
+
+{% extends "layout.html" %}
+
+{%block head%}
+  <link href="https://cdn.jsdelivr.net/gh/gitbrent/bootstrap4-toggle@3.6.1/css/bootstrap4-toggle.min.css" rel="stylesheet">
+{%endblock%}
+
+{% block content %}
+
+<!-- Device info header -->
+<div class="row">
+  <div class="col-lg-6">
+    <div class="d-sm-flex align-items-center justify-content-between mb-4">
+      <h1 class="h3 mb-0 text-gray-800">
+        {{device.name}}
+      </h1>
+    </div>
+  </div>
+  <div class="col-lg-6 text-right">
+    <!-- <i class="fas fa-bolt"></i> -->
+    <a id="device-favorite" href="#" class="btn btn-warning btn-circle btn-lg">
+      <i class="fa"></i>
+    </a>
+  </div>
+</div>
+<!-- End Device info header -->
+
+  <!-- Content Row -->
+  <div class="row">
+    <!-- Device Info -->
+    <div class="col-xl-6 col-lg-6">
+      <div class="card shadow mb-4">
+        <!-- Card Header -->
+        <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+          <h6 class="m-0 font-weight-bold text-primary">
+            Info
+          </h6>
+        </div>
+
+        <!-- Card Body -->
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-striped" id="dataTable" width="100%" cellspacing="0">
+              <tr>
+                <td><b>Address</b></td>
+                <td>
+                  <code>{{device.address}}</code>
+                </td>
+              </tr>
+              <tr>
+                <td><b>Last Seen</b></td>
+                <td><code>{{device.last_seen}}</code></td>
+              </tr>
+              <tr>
+                <td></td>
+                <td><a href="/devices/set/{{device.id}}"> Push URL</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div><!-- END Device Info -->
+
+
+  </div>
+{%endblock%}
+
+<!-- End File: kio/kio-server/templates/devices/info.html
