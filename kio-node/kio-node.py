@@ -11,7 +11,7 @@ import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.1a'
+kio_version = 'v0.0.1b'
 
 app = Flask(__name__)
 
