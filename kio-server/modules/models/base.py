@@ -76,9 +76,7 @@ class Base:
         return True
 
     def insert(self):
-        """Insert a new record of the model.
-           @unit-tested
-        """
+        """Insert a new record of the model. """
         self.setup()
         self.check_required_class_vars()
 
@@ -89,8 +87,6 @@ class Base:
             self.table_name,
             self.get_fields_sql(),
             self.get_parmaterized_num())
-        print(insert_sql)
-        print(self.get_values_sql())
         self.cursor.execute(insert_sql, self.get_values_sql())
 
         self.conn.commit()
@@ -98,9 +94,7 @@ class Base:
         return True
 
     def save(self, where: list = []) -> bool:
-        """Saves a model instance in the model table.
-           @unit-tested
-        """
+        """Saves a model instance in the model table. """
         self.setup()
         self.check_required_class_vars()
 
@@ -237,10 +231,7 @@ class Base:
         return field_value_param_sql
 
     def get_values_sql(self, skip_fields: list = ['id']) -> tuple:
-        """
-           Generates the model values to send to the sql lite interpretor as a tuple.
-           @unit-tested
-        """
+        """Generate the model values to send to the sql lite interpretor as a tuple. """
         vals = []
         for field in self.total_map:
             # Skip fields we don't want included in db writes
@@ -279,16 +270,14 @@ class Base:
         return tuple(vals)
 
     def get_update_set_sql(self, skip_fields=['id']):
-        """
-           Generates the models SET sql statements, ie: SET key = value, other_key = other_value.
-           @unit-tested - @todo needs updating for "skip_fields"
-        """
+        """Generate the models SET sql statements, ie: SET key = value, other_key = other_value. """
         set_sql = ""
         for field in self.total_map:
             if field['name'] in skip_fields:
                 continue
             set_sql += "`%s` = ?,\n" % field['name']
-        set_sql = set_sql.replace("?", "%s")
+        if self.backend == "mysql":
+            set_sql = set_sql.replace("?", "%s")
         return set_sql[:-2]
 
     def check_required_class_vars(self, extra_class_vars: list = []) -> bool:

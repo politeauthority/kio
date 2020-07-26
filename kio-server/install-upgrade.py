@@ -6,8 +6,10 @@ import logging
 
 from modules import configer
 from modules import db
-from modules.models.entity_meta import EnityMeta
+from modules.models.entity_meta import EntityMeta
+from modules.models.option import Option
 from modules.models.device import Device
+from modules.models.device_cmd import DeviceCmd
 from modules.models.url import Url
 
 class InstallUpgrade:
@@ -40,12 +42,20 @@ class InstallUpgrade:
         return conn, cursor
 
     def create_tables(self):
+        """Create the tables if they don't exist. """
         logging.info('Creating tables')
+        self._create_model_table('Entity_Meta')
+        self._create_model_table('Option')
         self._create_model_table('Device')
+        self._create_model_table('Device_Cmd')
 
-
-    def _create_model_table(self, model):
-        model = self._import_model('modules.models.%s.%s' % (model.lower(), model))
+    def _create_model_table(self, model: str):
+        """Create the tables for the requested model. This requires the model to still be manually
+           imported.
+        """
+        model_file = model.lower()
+        model_class = model.replace("_", "")
+        model = self._import_model('modules.models.%s.%s' % (model_file, model_class ))
         obj = model(self.conn, self.cursor)
         obj.create_table()
         logging.info('Created:\t%s' % obj.table_name)

@@ -41,15 +41,12 @@ def run() -> str:
     if cmd_devices == 'all':
         the_devices = cdevices.get_all()
 
+    success = True
     for device in the_devices:
-        url = "http://%s/set-display" % device.address
-        payload = {
-            'url': cmd_url
-        }
-        print(url)
-        print(payload)
-        response = requests.get(url, payload)
-        print(response)
+        device.conn = conn
+        device.cursor = cursor
+        if not device.cmd(cmd_url):
+            success = False
 
     return redirect('/command/')
 

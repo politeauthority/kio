@@ -30,8 +30,8 @@ def index() -> str:
 
 @devices.route('info/<device_id>')
 def info(device_id: int) -> str:
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
     """Device info page."""
+    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
     device = DeviceModel(conn, cursor)
     device.get_by_id(device_id)
     print(device)
