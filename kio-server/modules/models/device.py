@@ -29,12 +29,20 @@ class Device(Base):
                 'type': 'datetime'
             },
             {
+                'name': 'last_command_id',
+                'type': 'int'
+            },
+            {
                 'name': 'last_command',
                 'type': 'datetime'
             },
             {
                 'name': 'last_command_status',
                 'type': 'str'
+            },
+            {
+                'name': 'online',
+                'type': 'bool'
             },
         ]
         self.setup()

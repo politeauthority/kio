@@ -71,9 +71,10 @@ class Cron:
         print('Checking device %s' % device.name)
         device.conn = self.conn
         device.cursor = self.cursor
-        status_url = "http://%s/status" % device.address
+        status_url = "%s/status" % device.address
         response = requests.get(status_url)
         if response.status_code in [200]:
+            device.updated_ts = arrow.utcnow().datetime
             device.last_seen = arrow.utcnow().datetime
             device.save()
         print(response.json())

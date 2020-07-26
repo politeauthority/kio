@@ -33,13 +33,8 @@ def close_connection(exception):
 @app.route('/')
 def index() -> str:
     """ App Index."""
-    data = {
-    }
-    print("\n")
-    print(app.config['KIO_SERVER_DB'])
-    print("\n")
-    x = db.get_db_flask(app.config['KIO_SERVER_DB'])
-    print(x)
+    data = {}
+    return render_template("dashboard.html")
 
     
 def register_blueprints(app: Flask):

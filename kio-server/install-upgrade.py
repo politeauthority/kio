@@ -43,16 +43,17 @@ class InstallUpgrade:
 
     def setup_kio_dir(self):
         kio_path = self.config.KIO_SERVER_DATA
-        if os.path.exists(kio_path):
-            return
+        if not os.path.exists(kio_path):
+            os.makedirs(self.config.KIO_SERVER_DATA)
+        
+        self.change_permissions_recursive(self.config.KIO_SERVER_DATA, 0o777)
 
-        os.makedirs(self.config.KIO_SERVER_DATA)
-
-        for root, dirs, files in os.walk(kio_path):  
-          for momo in dirs:  
-            os.chown(os.path.join(root, momo), 777, 20)
-          for momo in files:
-            os.chown(os.path.join(root, momo), 777, 20)
+    def change_permissions_recursive(self, path, mode):
+        for root, dirs, files in os.walk(path, topdown=False):
+            for dir in [os.path.join(root,d) for d in dirs]:
+                os.chmod(dir, mode)
+        for file in [os.path.join(root, f) for f in files]:
+                os.chmod(file, mode)
 
     def get_database(self, server_file):
         """Create the Lan Nanny database if it's not existent, then return the MySql connection."""
