@@ -50,7 +50,7 @@ class Device(Base):
         dc.type = "url"
         dc.command = url
 
-        device_url = "http://%s/set-display" % self.address
+        device_url = "%s/set-display" % self.address
         payload = {
             'url': url
         }

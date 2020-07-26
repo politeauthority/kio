@@ -3,6 +3,7 @@ This process can be run safely at anytime to setup a new or in place upgrade and
 
 """
 import logging
+import os
 
 from modules import configer
 from modules import db
@@ -18,10 +19,14 @@ class InstallUpgrade:
         """Run the install/upgrader. """
         self.setup_logging()
         # Get the config
-        config = configer.get_config()
-        # Get the Database
-        self.conn, self.cursor = self.get_database(config.KIO_SERVER_DB)
+        self.config = configer.get_config()
 
+        print(self.config.KIO_SERVER_DB)
+        # Setup Kio dir
+        self.setup_kio_dir()
+
+        # Get the Database
+        self.conn, self.cursor = self.get_database(self.config.KIO_SERVER_DB)
         # Create the Database and tables
         self.create_tables()
 
@@ -34,6 +39,19 @@ class InstallUpgrade:
             datefmt='%m/%d/%Y %I:%M:%S %p',
             level=log_level,
             handlers=[logging.StreamHandler()])
+
+    def setup_kio_dir(self):
+        kio_path = self.config.KIO_SERVER_DATA
+        if os.path.exists(kio_path):
+            return
+
+        os.makedirs(self.config.KIO_SERVER_DATA)
+
+        for root, dirs, files in os.walk(kio_path):  
+          for momo in dirs:  
+            os.chown(os.path.join(root, momo), 777, 20)
+          for momo in files:
+            os.chown(os.path.join(root, momo), 777, 20)
 
     def get_database(self, server_file):
         """Create the Lan Nanny database if it's not existent, then return the MySql connection."""
