@@ -27,6 +27,7 @@ class InstallUpgrade:
 
         # Get the Database
         self.conn, self.cursor = self.get_database(self.config.KIO_SERVER_DB)
+
         # Create the Database and tables
         self.create_tables()
 
