@@ -1,0 +1,66 @@
+<!-- Device Roster -->
+{% extends "layout.html" %}
+{% block head%}
+{%endblock%}
+
+{% block content %}
+  <!-- Page Heading -->
+  <div class="row">
+    <div class="col-lg-6">
+      <div class="d-sm-flex align-items-center justify-content-between mb-4">
+        <h1 class="h3 mb-0 text-gray-800">
+          Devices
+        </h1>
+      </div>
+    </div>
+  </div>
+  <!-- Sub Nav -->
+  <div class="row">
+    {% with active_page=active_page_devices %}
+      {% include "devices/sub_nav.html" %}
+    {% endwith %}
+  </div> <!-- end Sub Nav-->
+
+  <!-- Content Row -->
+  <div class="row">
+
+    <!-- Device Table -->
+    <div class="col-xl-8 col-lg-8">
+      <div class="card shadow mb-4">
+        <!-- Card Body -->
+        <div class="card-body">
+          <div class="table-responsive">
+            {%if devices%}
+              <table class="table table-striped" id="dataTable" width="100%" cellspacing="0">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th class="d-none d-sm-block">Address</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                {% for device in devices %}
+                <tr>
+                  <td>
+                    <a href="/devices/info/{{device.id}}">{{device.name}}</a>
+                  </td>
+                  <td class="d-none d-sm-block">{{device.address}}</td>
+                  <td>{{device.last_seen}}</td>
+                </tr>
+                {%endfor%}
+              </table>
+            {%else%}
+              <div class="text-center">
+                No Devices Found.
+              </div>
+            {%endif%}
+          </div>
+      </div>
+    </div><!-- End device table -->
+
+  </div> <!-- End Main Content -->
+
+{%endblock%}
+
+
+<!-- EndFile: kio/kio-server/templates/devices/dashboard.html -->

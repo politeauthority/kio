@@ -1,0 +1,67 @@
+<!-- Command Dashboard -->
+{% extends "layout.html" %}
+{% block head%}
+{%endblock%}
+
+{% block content %}
+  <!-- Page Heading -->
+  <div class="row">
+    <div class="col-lg-6">
+      <div class="d-sm-flex align-items-center justify-content-between mb-4">
+        <h1 class="h3 mb-0 text-gray-800">
+          Command
+        </h1>
+      </div>
+    </div>
+  </div>
+
+  <!-- Content Row -->
+  <div class="row">
+
+    <!-- Set Now -->
+    <div class="col-xl-8 col-lg-8">
+      <div class="card shadow mb-4">
+
+        <!-- Card Header -->
+        <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+          <h6 class="m-0 font-weight-bold text-primary">
+            Set Now
+          </h6>
+        </div>
+
+        <!-- Card Body -->
+        <div class="card-body">
+          <form action="/command/run" method="POST">
+            <!-- Device Select -->
+            <div class="form-group">
+              <label for="cmd_now_device">Devices</label>
+              <select class="form-control" id="cmd_now_device" name="cmd_now_device"  aria-describedby="cmd_now_device_help">
+                <option value="all">All</option>
+                {% for device in devices %}
+                <option value="{{device.id}}">{{device.name}}</option>
+                {%endfor%}
+              </select>
+              <small id="cmd_now_device_help" class="form-text text-muted">Device to set url.</small>
+            </div>
+            <!-- End Device Select -->
+
+            <!-- Url Input -->
+            <div class="form-group form-sm">
+              <label for="cmd_now_url">URL</label>
+              <input type="input" class="form-control form-sm" id="cmd_now_url" name="cmd_now_url" aria-describedby="cmd_now_url_help" placeholder="https://www.google.com">
+              <small id="cmd_now_url_help" class="form-text text-muted">Url to send to devices.</small>
+            </div>
+            <!-- End Url Input -->
+
+            <button class="btn btn-success" type="submit">Send</button>
+          </form>
+        </div>
+      </div>
+    </div><!-- End device table -->
+
+  </div> <!-- End Main Content -->
+
+{%endblock%}
+
+
+<!-- EndFile: kio/kio-server/templates/command/dashboard.html -->
