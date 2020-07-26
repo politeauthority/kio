@@ -7,9 +7,11 @@ import sys
 
 from flask import Flask, jsonify, request
 
+import uptime
+
 from modules import utils
 
-kio_version = 'v0.0.1'
+kio_version = 'v0.0.1a'
 
 app = Flask(__name__)
 
@@ -18,7 +20,7 @@ app = Flask(__name__)
 def index() -> str:
     """ App Index."""
     data = {
-        'Kio-Node': kio_version
+        'kio-node': kio_version
     }
     return jsonify(data)
 
@@ -27,8 +29,9 @@ def index() -> str:
 def status() -> str:
     """ App Index."""
     data = {
-        'Kio-Node': kio_version
-        'operational': True
+        'kio-node': kio_version,
+        'operational': True,
+        'uptime': uptime.boottime().__str__()
     }
     return jsonify(data)
 
@@ -45,10 +48,10 @@ def set_display() -> str:
             set_url = True
 
     data = {
-        'Kio-Node': kio_version
+        'kio-node': kio_version,
         'status': 'success',
         'set_url': set_url,
-        'url': url
+        'url': url,
     }
     return jsonify(data)
 
