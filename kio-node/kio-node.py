@@ -11,14 +11,14 @@ import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.1b'
+kio_version = 'v0.0.1c'
 
 app = Flask(__name__)
 
 
 @app.route('/')
 def index() -> str:
-    """ App Index."""
+    """App Index. """
     data = {
         'kio-node': kio_version
     }
@@ -27,7 +27,7 @@ def index() -> str:
 
 @app.route('/status')
 def status() -> str:
-    """ App Index."""
+    """App status page"""
     data = {
         'kio-node': kio_version,
         'operational': True,
@@ -38,7 +38,9 @@ def status() -> str:
 
 @app.route('/set-display')
 def set_display() -> str:
-    """ App Index."""
+    """API route for setting the Kio-Nodes Chromium to load a requested URL, and killing the old
+       Chromium tab process.
+    """
     url = request.args.get('url')
     set_url = False
     if url: 
@@ -46,6 +48,8 @@ def set_display() -> str:
         ret = utils.set_display(url)
         if ret:
             set_url = True
+            # Remove the old tab procs
+            utils.kill_old_tab_procs()
 
     data = {
         'kio-node': kio_version,
