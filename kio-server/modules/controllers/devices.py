@@ -56,9 +56,7 @@ def create() -> str:
 def save():
     """Device save, route for new and editing devices."""
     conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
-    device = DeviceModel()
-    device.conn = conn
-    device.cursor = cursor
+    device = DeviceModel(conn, cursor)
     if request.form['device_id'] != 'new':
         device.get_by_id(request.form['device_id'])
         if not device.id:

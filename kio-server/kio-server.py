@@ -10,6 +10,8 @@ from flask import Flask, jsonify, request, render_template, g
 from modules import db
 from modules.controllers.devices import devices as ctrl_devices
 from modules.controllers.command import command as ctrl_command
+from modules.controllers.urls import urls as ctrl_urls
+from modules.controllers.playlists import playlists as ctrl_playlists
 
 app = Flask(__name__)
 
@@ -41,6 +43,8 @@ def register_blueprints(app: Flask):
     """Connect the blueprints to the router."""
     app.register_blueprint(ctrl_devices)
     app.register_blueprint(ctrl_command)
+    app.register_blueprint(ctrl_urls)
+    app.register_blueprint(ctrl_playlists)
 
 
 register_blueprints(app)

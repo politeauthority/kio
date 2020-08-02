@@ -122,6 +122,8 @@ class Base:
             self.table_name,
             self.get_update_set_sql(),
             where_sql)
+        print(update_sql)
+        print(self.get_values_sql())
         self.cursor.execute(update_sql, self.get_values_sql())
         self.conn.commit()
         return True
@@ -234,7 +236,7 @@ class Base:
         field_value_param_sql = field_value_param_sql[:-2]
         return field_value_param_sql
 
-    def get_values_sql(self, skip_fields: list = ['id']) -> tuple:
+    def get_values_sql(self, skip_fields: list = ['id', 'created_ts']) -> tuple:
         """Generate the model values to send to the sql lite interpretor as a tuple. """
         vals = []
         for field in self.total_map:
@@ -273,7 +275,7 @@ class Base:
 
         return tuple(vals)
 
-    def get_update_set_sql(self, skip_fields=['id']):
+    def get_update_set_sql(self, skip_fields=['id', 'created_ts']):
         """Generate the models SET sql statements, ie: SET key = value, other_key = other_value. """
         set_sql = ""
         for field in self.total_map:

@@ -1,0 +1,64 @@
+<!-- Urls Dashboard -->
+{% extends "layout.html" %}
+{% block head%}
+{%endblock%}
+
+{% block content %}
+  <!-- Page Heading -->
+  <div class="row">
+    <div class="col-lg-6">
+      <div class="d-sm-flex align-items-center justify-content-between mb-4">
+        <h1 class="h3 mb-0 text-gray-800">
+          Urls
+        </h1>
+      </div>
+    </div>
+  </div>
+  <!-- Sub Nav -->
+  <div class="row">
+    {% with active_page=active_page_devices %}
+      {% include "urls/sub_nav.html" %}
+    {% endwith %}
+  </div> <!-- end Sub Nav-->
+
+  <!-- Content Row -->
+  <div class="row">
+
+    <!-- Device Table -->
+    <div class="col-xl-8 col-lg-12">
+      <div class="card shadow mb-12">
+        <!-- Card Body -->
+        <div class="card-body">
+          <div class="table-responsive">
+            {%if urls%}
+              <table class="table table-striped" id="dataTable" width="100%" cellspacing="0">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Address</th>
+                  </tr>
+                </thead>
+                {% for url in urls %}
+                <tr>
+                  <td>
+                    <a href="/urls/info/{{url.id}}">{{url.name}}</a>
+                  </td>
+                  <td class="d-none d-sm-block">{{url.address}}</td>
+                </tr>
+                {%endfor%}
+              </table>
+            {%else%}
+              <div class="text-center">
+                No Urls Found.
+              </div>
+            {%endif%}
+          </div>
+      </div>
+    </div><!-- End device table -->
+
+  </div> <!-- End Main Content -->
+
+{%endblock%}
+
+
+<!-- EndFile: kio/kio-server/templates/urls/dashboard.html -->
