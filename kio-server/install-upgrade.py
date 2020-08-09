@@ -4,6 +4,7 @@ This process can be run safely at anytime to setup a new or in place upgrade and
 """
 import logging
 import os
+import subprocess
 
 from modules import configer
 from modules import db
@@ -12,6 +13,7 @@ from modules.models.option import Option
 from modules.models.device import Device
 from modules.models.device_cmd import DeviceCmd
 from modules.models.url import Url
+from modules.models.playlist import Playlist
 
 class InstallUpgrade:
 
@@ -46,7 +48,8 @@ class InstallUpgrade:
         if not os.path.exists(kio_path):
             os.makedirs(self.config.KIO_SERVER_DATA)
         
-        self.change_permissions_recursive(self.config.KIO_SERVER_DATA, 0o777)
+        print("chmod -R 777 %s" % self.config.KIO_SERVER_DATA)
+        subprocess.call("chmod -R 777 %s" % self.config.KIO_SERVER_DATA, shell=True)
 
     def change_permissions_recursive(self, path, mode):
         for root, dirs, files in os.walk(path, topdown=False):
@@ -68,6 +71,8 @@ class InstallUpgrade:
         self._create_model_table('Option')
         self._create_model_table('Device')
         self._create_model_table('Device_Cmd')
+        self._create_model_table('Url')
+        self._create_model_table('Playlist')
 
     def _create_model_table(self, model: str):
         """Create the tables for the requested model. This requires the model to still be manually

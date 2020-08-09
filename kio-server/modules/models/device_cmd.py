@@ -36,4 +36,21 @@ class DeviceCmd(Base):
         return "<DeviceCmd: %s>" % self.command
 
 
+    def last_command(self, device_id):
+        qry = """
+            SELECT *
+            FROM `%s`
+            WHERE
+                `device_id`=%s
+            ORDER BY `created_ts` DESC
+            LIMIT 1;
+            """ % (self.table_name, device_id)
+        self.cursor.execute(qry)
+        raw = self.cursor.fetchone()
+        if not raw:
+            return False
+        self.build_from_list(raw)
+        return True
+
+
 # End File: kio/kio-server/modules/models/device_cmd.py

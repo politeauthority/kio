@@ -48,10 +48,14 @@ class Base:
             return "<%s: %s>" % (self.__class__.__name__, self.id)
         return "<%s>" % self.__class__.__name__
 
+    def connect(self, conn, cursor):
+        """Quick bootstrap method to connect the model to the database connection. """
+        self.conn = conn
+        self.cursor = cursor
+        return True
+
     def create_table(self) -> bool:
-        """Create a table based on the self.table_name, and self.field_map.
-           @unit-tested
-        """
+        """Create a table based on the self.table_name, and self.field_map. """
         logging.debug('Creating %s' % self.__class__.__name__)
         self._create_total_map()
         if not self.table_name:
@@ -85,9 +89,11 @@ class Base:
 
         insert_sql = "INSERT INTO %s (%s) VALUES (%s)" % (
             self.table_name,
-            self.get_fields_sql(),
+            self.get_fields_sql(skip_fields=['id']),
             self.get_parmaterized_num())
-        self.cursor.execute(insert_sql, self.get_values_sql())
+        print(insert_sql)
+        print(self.get_values_sql(skip_fields=['id']))
+        self.cursor.execute(insert_sql, self.get_values_sql(skip_fields=['id']))
 
         self.conn.commit()
         self.id = self.cursor.lastrowid
@@ -162,10 +168,8 @@ class Base:
         return True
 
     def build_from_list(self, raw: list) -> bool:
-        """
-           Build a model from an ordered list, converting data types to their desired type where
+        """Build a model from an ordered list, converting data types to their desired type where 
            possible.
-           @unit-tested
            :param raw: The raw data from the database to be converted to model data.
         """
         count = 0
@@ -198,10 +202,7 @@ class Base:
         return True
 
     def get_fields_sql(self, skip_fields: list = ['id']) -> str:
-        """
-           Gets all class table column fields in a comma separated list for sql cmds.
-           @unit-tested
-        """
+        """Get all class table column fields in a comma separated list for sql cmds. """
         field_sql = ""
         for field in self.total_map:
             # Skip fields we don't want included in db writes
@@ -230,7 +231,7 @@ class Base:
         field_value_param_sql = field_value_param_sql[:-2]
         return field_value_param_sql
 
-    def get_values_sql(self, skip_fields: list = ['id']) -> tuple:
+    def get_values_sql(self, skip_fields: list = ['id', 'created_ts']) -> tuple:
         """Generate the model values to send to the sql lite interpretor as a tuple. """
         vals = []
         for field in self.total_map:
@@ -269,7 +270,7 @@ class Base:
 
         return tuple(vals)
 
-    def get_update_set_sql(self, skip_fields=['id']):
+    def get_update_set_sql(self, skip_fields=['id', 'created_ts']):
         """Generate the models SET sql statements, ie: SET key = value, other_key = other_value. """
         set_sql = ""
         for field in self.total_map:
@@ -281,10 +282,8 @@ class Base:
         return set_sql[:-2]
 
     def check_required_class_vars(self, extra_class_vars: list = []) -> bool:
-        """
-           Quick class var checks to make sure the required class vars are set before proceeding
+        """Quick class var checks to make sure the required class vars are set before proceeding
            with an operation.
-           @unit-tested
         """
         if not self.conn:
             raise AttributeError('Missing self.conn')
@@ -302,18 +301,13 @@ class Base:
         return True
 
     def _create_total_map(self) -> bool:
-        """
-           Concatenate the base_map and models field_map together into self.total_map.
-           @unit-tested
-        """
+        """Concatenate the base_map and models field_map together into self.total_map. """
         self.total_map = self.base_map + self.field_map
         return True
 
     def _set_defaults(self) -> bool:
-        """
-           Set the defaults for the class field vars and populates the self.field_list var
+        """Set the defaults for the class field vars and populates the self.field_list var
            containing all table field names.
-           @unit-tested
         """
         self.field_list = []
         for field in self.total_map:
@@ -332,10 +326,7 @@ class Base:
         return True
 
     def _set_types(self) -> bool:
-        """
-           Set the types of class table field vars and corrects their types where possible.
-           @unit-tested
-        """
+        """Set the types of class table field vars and corrects their types where possible."""
         for field in self.total_map:
             class_var_name = field['name']
 
@@ -354,6 +345,7 @@ class Base:
             #     continue
 
             if field['type'] == 'datetime' and type(class_var_value) != datetime:
+                print(field)
                 setattr(
                     self,
                     class_var_name,
@@ -361,10 +353,7 @@ class Base:
                 continue
 
     def _convert_ints(self, name: str, value) -> bool:
-        """
-           Attempts to convert ints to a usable value or raises an AttributeError.
-           @unit-tested
-        """
+        """Attempts to convert ints to a usable value or raises an AttributeError. """
         if isinstance(value, int):
             return value
         if isinstance(value, str) and value.isdigit():
@@ -375,10 +364,7 @@ class Base:
             __class__.__name__, name, value))
 
     def _convert_bools(self, name: str, value) -> bool:
-        """
-           Convert bools into usable value or raises an AttributeError.
-           @unit-tested
-        """
+        """Convert bools into usable value or raises an AttributeError. """
         if isinstance(value, bool):
             return value
 
@@ -438,10 +424,8 @@ class Base:
         return field_sql
 
     def _xlate_field_type(self, field_type):
-        """
-           Translates field types into sql lite column types.
+        """Translates field types into sql lite column types.
            @todo: create better class var for xlate map.
-           @unit-tested
         """
         if field_type == 'int':
             return 'INTEGER'

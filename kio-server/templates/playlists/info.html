@@ -1,0 +1,83 @@
+<!-- Playlist Info -->
+
+{% extends "layout.html" %}
+
+{% block content %}
+
+<!-- Playlist info header -->
+<div class="row">
+  <div class="col-lg-6">
+    <div class="d-sm-flex align-items-center justify-content-between mb-4">
+      <h1 class="h3 mb-0 text-gray-800">
+        {{playlist.name}}
+      </h1>
+    </div>
+  </div>
+
+</div>
+<!-- End Playlist info header -->
+
+<ul class="nav sub_nav">
+  <li class="nav-item">
+    <a class="nav-link {%if active_page=='dashboard'%}active{%endif%}" href="/playlists/edit/{{playlist.id}}">Edit</a>
+  </li>
+</ul> 
+
+<!-- Content Row -->
+<div class="row">
+  <!-- Playlist Info -->
+  <div class="col-xl-6 col-lg-6">
+    <div class="card shadow mb-4">
+      <!-- Card Header -->
+      <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+        <h6 class="m-0 font-weight-bold text-primary">
+          Info
+        </h6>
+      </div>
+
+      <!-- Card Body -->
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-striped" id="dataTable" width="100%" cellspacing="0">
+            <tr>
+              <td><b>Name</b></td>
+              <td>{{playlist.name}}</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div><!-- END Playlist Info -->
+
+
+  <!-- Playlist Urls -->
+  <div class="col-xl-6 col-lg-6">
+    <div class="card shadow mb-4">
+      <!-- Card Header -->
+      <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+        <h6 class="m-0 font-weight-bold text-primary">
+          Urls
+        </h6>
+      </div>
+
+      <!-- Card Body -->
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-striped" id="dataTable" width="100%" cellspacing="0">
+            {%for url in urls%}
+
+            <tr>
+              <td>{{url.name}}</td>
+              <td>{{url.address}}</td>
+            </tr>
+            {%endfor%}
+          </table>
+        </div>
+      </div>
+    </div>
+  </div><!-- END Playlist Info -->
+
+</div>
+{%endblock%}
+
+<!-- End File: kio/kio-server/templates/devices/info.html

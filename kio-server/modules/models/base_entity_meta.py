@@ -14,7 +14,7 @@ class BaseEntityMeta(Base):
         self.cursor = cursor
         self.table_name = None
         self.table_name_meta = EntityMeta().table_name
-        self.meta = {}
+        self.metas = {}
 
     def __repr__(self):
         if self.id:
@@ -27,14 +27,14 @@ class BaseEntityMeta(Base):
         """
         if not super(BaseEntityMeta, self).get_by_id(model_id):
             return False
-        self.load_meta(model_id)
+        self.load_meta()
         return True
 
     def build_from_list(self, raw: list, meta=False) -> bool:
         """Build a model from list, and pull its meta data."""
         super(BaseEntityMeta, self).build_from_list(raw)
         if meta:
-            self.load_meta(self.id)
+            self.load_meta()
 
     def save(self) -> bool:
         """Extend the Base model save, settings saves for all model self.metas objects."""
@@ -100,7 +100,7 @@ class BaseEntityMeta(Base):
         self.cursor.execute(sql)
         return True
 
-    def load_meta(self, model_id) -> bool:
+    def load_meta(self) -> bool:
         """Load the model's meta data."""
         sql = """
             SELECT *
@@ -108,7 +108,7 @@ class BaseEntityMeta(Base):
             WHERE
                 entity_id = %s AND
                 entity_type = '%s';
-            """ % (self.table_name_meta, model_id, self.table_name)
+            """ % (self.table_name_meta, self.id, self.table_name)
         self.cursor.execute(sql)
         meta_raws = self.cursor.fetchall()
         self._load_from_meta_raw(meta_raws)

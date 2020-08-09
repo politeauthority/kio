@@ -3,11 +3,11 @@
 """
 import requests
 
-from .base import Base
+from .base_entity_meta import BaseEntityMeta
 from .device_cmd import DeviceCmd
 
 
-class Device(Base):
+class Device(BaseEntityMeta):
     """Device object, representing a Kio registered device."""
 
     def __init__(self, conn=None, cursor=None):
@@ -33,7 +33,7 @@ class Device(Base):
                 'type': 'int'
             },
             {
-                'name': 'last_command',
+                'name': 'last_command_ts',
                 'type': 'datetime'
             },
             {
@@ -51,11 +51,11 @@ class Device(Base):
         """Device representation show the name if we have one."""
         return "<Device: %s>" % self.name
 
-    def cmd(self, url):
+    def cmd(self, url, type):
         """ """
         dc = DeviceCmd(self.conn, self.cursor)
         dc.device_id = self.id
-        dc.type = "url"
+        dc.type = type
         dc.command = url
 
         device_url = "%s/set-display" % self.address
@@ -73,6 +73,12 @@ class Device(Base):
         dc.status = "succeeded"
         dc.save()
         return dc.status
+
+    def last_command(self):
+        dc = DeviceCmd(self.conn, self.cursor)
+        dc.last_command(self.id)
+        return dc
+
 
 
 
