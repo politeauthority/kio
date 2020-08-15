@@ -126,4 +126,9 @@ def get_renderer_client_id(command: str) -> int:
     return tab_id
 
 
+def shell(command: str) -> bool:
+    """Run a raw shell command. """
+    subprocess.call(command, shell=True)
+    return True
+
 # End File: kio/kio-node/modules/utils.py
