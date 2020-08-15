@@ -11,7 +11,7 @@ import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.1c'
+kio_version = 'v0.0.1d'
 
 app = Flask(__name__)
 
@@ -59,6 +59,16 @@ def set_display() -> str:
     }
     return jsonify(data)
 
+
+@app.route('/reboot')
+def reboot() -> str:
+    """API route for rebooting the Kio Node. """
+    utils.shell('shutdown -r now')
+    data = {
+        'kio-node': kio_version,
+        'status': 'success',
+    }
+    return jsonify(data)
 
 
 if __name__ == '__main__':
