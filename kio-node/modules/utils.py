@@ -2,14 +2,16 @@
 
 """
 import logging
+import os
 import subprocess
 
 
 def set_display(url: str):
     """Set chromium to the url specified."""
-    cmd = 'export DISPLAY=":0" && chromium-browser %s' % url
-    logging.info('Running:\t%s' % cmd)
-    subprocess.call(cmd, shell=True)
+    cmd = 'sudo su pi -c "export DISPLAY=":0" && chromium-browser %s"' % url
+    print('Running:\t%s' % cmd)
+    # os.setreuid(1000,1000)
+    subprocess.check_output(cmd, shell=True)
     return cmd
 
 
@@ -105,10 +107,16 @@ def kill_old_tab_procs(procs: list) -> bool:
         if proc['tab_id'] != highest_tab_proc:
             pids_to_kill.append(proc['pid'])
 
+    #Temporarily limit the number of kill pids to one.
+    print('All PIDS: %s' % pids_to_kill)
+    pids_to_kill = [pids_to_kill[len(pids_to_kill) - 1]]
+
     # Kill the procs selected
-    logging.info('Killing pids %s' % pids_to_kill)
+    print('Killing pids %s' % pids_to_kill)
     for pid in pids_to_kill:
-        cmd = "kill %s" % pid
+        cmd = 'sudo su pi -c "kill %s"' % pid
+        cmd = 'kill %s' % pid
+        print(cmd)
         logging.debug(cmd)
         subprocess.call(cmd, shell=True)
     return True
@@ -130,5 +138,6 @@ def shell(command: str) -> bool:
     """Run a raw shell command. """
     subprocess.call(command, shell=True)
     return True
+
 
 # End File: kio/kio-node/modules/utils.py
