@@ -6,13 +6,11 @@ import os
 import sys
 
 from flask import Flask, jsonify, request
-
 import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.1d'
-
+kio_version = 'v0.0.1g'
 app = Flask(__name__)
 
 
@@ -49,7 +47,7 @@ def set_display() -> str:
         if ret:
             set_url = True
             # Remove the old tab procs
-            utils.kill_old_tab_procs()
+            utils.kill_old_tabs()
 
     data = {
         'kio-node': kio_version,
