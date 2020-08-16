@@ -22,7 +22,7 @@ class Base:
         self.conn = conn
         self.cursor = cursor
         self.iodku = True
-        self.backend = "sqlite"
+        self.backend = "mysql"
 
         self.table_name = None
         self.base_map = [

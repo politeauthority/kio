@@ -16,7 +16,7 @@ devices = Blueprint('Devices', __name__, url_prefix='/devices')
 @devices.route('/')
 def index() -> str:
     """Device roster page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     cdevices = DevicesCollect(conn, cursor)
     all_devices = cdevices.get_all()
     data = {
@@ -31,7 +31,7 @@ def index() -> str:
 @devices.route('info/<device_id>')
 def info(device_id: int) -> str:
     """Device info page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     device = DeviceModel(conn, cursor)
     device.get_by_id(device_id)
     print(device)
@@ -55,7 +55,7 @@ def create() -> str:
 @devices.route('/save', methods=['POST'])
 def save():
     """Device save, route for new and editing devices."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     device = DeviceModel(conn, cursor)
     if request.form['device_id'] != 'new':
         device.get_by_id(request.form['device_id'])

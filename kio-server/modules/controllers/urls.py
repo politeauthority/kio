@@ -16,7 +16,7 @@ urls = Blueprint('Urls', __name__, url_prefix='/urls')
 @urls.route('/')
 def index() -> str:
     """Urls roster page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     curls = UrlsCollect(conn, cursor)
     all_urls = curls.get_all()
     data = {
@@ -31,7 +31,7 @@ def index() -> str:
 @urls.route('info/<url_id>')
 def info(url_id: int) -> str:
     """Url info page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     url = UrlModel(conn, cursor)
     url.get_by_id(url_id)
     data = {
@@ -52,7 +52,7 @@ def create() -> str:
 @urls.route('/save', methods=['POST'])
 def save():
     """Device save, route for new and editing devices."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     url = UrlModel(conn, cursor)
     if request.form['url_id'] != 'new':
         url.get_by_id(request.form['url_id'])

@@ -13,9 +13,8 @@ from modules.controllers.command import command as ctrl_command
 from modules.controllers.urls import urls as ctrl_urls
 from modules.controllers.playlists import playlists as ctrl_playlists
 
+
 app = Flask(__name__)
-
-
 
 if os.environ.get('KIO_SERVER_CONFIG'):
     app.config.from_object('config.%s' % os.environ.get('KIO_SERVER_CONFIG'))
@@ -34,7 +33,7 @@ def close_connection(exception):
 
 @app.route('/')
 def index() -> str:
-    """ App Index."""
+    """App Index. """
     data = {}
     return render_template("dashboard.html")
 
@@ -50,7 +49,10 @@ def register_blueprints(app: Flask):
 register_blueprints(app)
 
 if __name__ == '__main__':
-    port = sys.argv[1]
+    if len(sys.argv) > 1:
+        port = sys.argv[1]
+    else:
+        port = 5009
     app.secret_key = 'super secret key'
     app.run(host="0.0.0.0", port=port, debug=True)
 

@@ -60,19 +60,22 @@ class InstallUpgrade:
 
     def get_database(self, server_file):
         """Create the Lan Nanny database if it's not existent, then return the MySql connection."""
-        conn, cursor = db.get_db(server_file)
+        conn, cursor = db.connect(server_file)
         logging.info('Database connection successful')
         return conn, cursor
 
     def create_tables(self):
         """Create the tables if they don't exist. """
         logging.info('Creating tables')
+        # Create base tables
         self._create_model_table('Entity_Meta')
         self._create_model_table('Option')
+        # Create app tables
         self._create_model_table('Device')
         self._create_model_table('Device_Cmd')
         self._create_model_table('Url')
         self._create_model_table('Playlist')
+
 
     def _create_model_table(self, model: str):
         """Create the tables for the requested model. This requires the model to still be manually

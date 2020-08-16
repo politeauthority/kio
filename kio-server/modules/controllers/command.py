@@ -18,7 +18,7 @@ command = Blueprint('Command', __name__, url_prefix='/command')
 @command.route('/')
 def index() -> str:
     """Device roster page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     cdevices = DevicesCollect(conn, cursor)
     all_devices = cdevices.get_all()
     data = {
@@ -33,7 +33,7 @@ def index() -> str:
 @command.route('/run', methods=["POST"])
 def run() -> str:
     """Set devices immediately to the requested url. """
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     cdevices = DevicesCollect(conn, cursor)
     
     cmd_devices = request.form['cmd_now_device']

@@ -17,7 +17,7 @@ playlists = Blueprint('Playlists', __name__, url_prefix='/playlists')
 @playlists.route('/')
 def index() -> str:
     """Urls roster page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     c_playlists = PlaylistsCollect(conn, cursor)
     all_pls = c_playlists.get_all()
     data = {
@@ -32,7 +32,7 @@ def index() -> str:
 @playlists.route('info/<playlist_id>')
 def info(playlist_id: int) -> str:
     """Playlist info page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     pl = PlaylistModel(conn, cursor)
     pl.get_by_id(playlist_id)
     urls = pl.get_urls()
@@ -47,7 +47,7 @@ def info(playlist_id: int) -> str:
 @playlists.route('edit/<playlist_id>')
 def edit(playlist_id: int) -> str:
     """Playlist edit page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     pl = PlaylistModel(conn, cursor)
     pl.get_by_id(playlist_id)
     urls = pl.get_urls()
@@ -68,7 +68,7 @@ def edit(playlist_id: int) -> str:
 @playlists.route('quick-save-remove-url/<playlist_id>/<url_id>')
 def qs_remove_url(playlist_id: int, url_id: int) -> str:
     """Playlist edit page."""
-    conn, cursor = db.get_db_flask(app.config['KIO_SERVER_DB'])
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     pl = PlaylistModel(conn, cursor)
     pl.get_by_id(playlist_id)
     url_ids = pl.urls.split(',')

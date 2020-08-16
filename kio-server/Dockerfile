@@ -1,26 +1,34 @@
-FROM debian:bullseye-slim
+FROM python:rc-alpine3.12
 
 ENV KIO_SERVER_CONFIG=docker
-ENV KIO_SERVER_DB_HOST=kio-server-mysql
+ENV KIO_SERVER_DB_DRIVER=mysql
+ENV KIO_SERVER_DB_HOST=mysql
 ENV KIO_SERVER_DB_PORT=3306
-ENV KIO_SERVER_DB_NAME=kio_pages
+ENV KIO_SERVER_DB_NAME=kio
 ENV KIO_SERVER_DB_USER=root
 ENV KIO_SERVER_DB_PASS=pass
 ENV KIO_SERVER_DB_DRIVER=mysql
 ENV KIO_SERVER_STATIC_PATH='/static'
 ENV KIO_SERVER_LOG_DIR=/app/logs
-ENV KIO_SERVER_TMP_DIR=/tmp/lan_nanny
-ENV KIO_SERVER_GIT_BRANCH=0.0.1
+ENV KIO_SERVER_TMP_DIR=/tmp/kio
 
 ADD ./ /app
-VOLUME /app/
-WORKDIR /app/
+VOLUME /app
+WORKDIR /app
 
 # Install apt requirements
-RUN apt-get -y update
+RUN apk update
+RUN apk add --virtual \
+    build-deps \
+    gcc \
+    python3-dev \
+    musl-dev \
+    mariadb-dev \
+    py3-pip \
+    bash 
 
-RUN apt-get -y install python3-pip
-
+# Install Kio Python requirements
 RUN pip install -r /app/requirements.txt
 
-CMD cd kio-server && gunicorn -b 0.0.0.0:5000 kio-server:app
+CMD tail -f /dev/null
+# CMD cd kio-server && gunicorn -b 0.0.0.0:5000 kio-server:app
