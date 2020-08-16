@@ -13,7 +13,7 @@ def set_display(url: str):
     return cmd
 
 
-def kill_old_tab_procs() -> bool:
+def kill_old_tabs() -> bool:
     """Kills old Chromium tabs that are not being displayed on the Kio-Node device."""
     chrome_procs = collect_procs("renderer-client-id")
     success = kill_old_tab_procs(chrome_procs)
@@ -32,7 +32,7 @@ def collect_procs(proc_search: str) -> list:
     proc1.stdout.close() # Allow proc1 to receive a SIGPIPE if proc2 exits.
     out, err = proc2.communicate()
     out = out.decode("utf-8") 
-    chrome_procs = filter_procs(outs)
+    chrome_procs = filter_procs(out)
     return chrome_procs
 
 
