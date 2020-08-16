@@ -6,13 +6,11 @@ import os
 import sys
 
 from flask import Flask, jsonify, request
-
 import uptime
 
 from modules import utils
 
 kio_version = 'v0.0.1g'
-
 app = Flask(__name__)
 
 
