@@ -14,7 +14,8 @@ one up.
  - Create a MySQL user for kio-server
 ```sql
 CREATE USER 'kio'@'%' IDENTIFIED BY 'password';
-GRANT ALL PRIVILEGES ON * . * TO 'kio'@'localhost';
+GRANT ALL PRIVILEGES ON kio . * TO 'kio'@'%';
+CREATE DATABASE IF NOT EXISTS kio;
 ```
 - Launch the Kio-Server docker container
 ```console

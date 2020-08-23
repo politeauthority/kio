@@ -8,6 +8,7 @@ from importlib import import_module
 import logging
 import logging.config
 import os
+import traceback
 
 import requests
 import paho.mqtt.client as mqtt
@@ -15,8 +16,9 @@ import paho.mqtt.client as mqtt
 from modules import db
 from modules.models.device import Device as DeviceModel
 
-BROKER_ADDRESS = '192.168.50.10'
-TOPIC = 'kio'
+BROKER_ADDRESS = os.environ.get('KIO_SERVER_MQTT_HOST')
+MQTT_TOPIC = os.environ.get('KIO_SERVER_MQTT_TOPIC')
+
 
 class Daemon:
 
@@ -46,6 +48,8 @@ class Daemon:
 
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug('Logging enabled - debug')
+        # Squelch urlib3/requests debug logs
+        logging.getLogger("requests").setLevel(logging.WARNING)
         return True
 
     def run(self):
@@ -60,33 +64,47 @@ class Daemon:
         client.connect(BROKER_ADDRESS)
         client.loop_forever()  # Start networking daemon
 
-    def on_connect(self, client, userdata, flags, rc):
+    def on_connect(self, client, userdata, flags, rc) -> bool:
         """The callback for when the client connects to the broker. """
         if rc == 0:
             logging.info("Connected to MQTT broker successfully")
         else:
             logging.error("Failed connecting to MQTT broker %s" % BROKER_ADDRESS)
-            exit(1)
-        client.subscribe(TOPIC)
+            return False
+        client.subscribe(MQTT_TOPIC)
+        return True
 
     def on_message(self, client, userdata, msg):
         """The callback for when a PUBLISH message is received from the server. """
-        logging.info("Message received-> " + msg.topic + " " + str(msg.payload))  # Print a received msg
-        msg_payload = json.loads(msg.payload)
-        self.route_device_msg(msg_payload)
+        try:
+            logging.info("Message received-> " + msg.topic + " " + str(msg.payload))  # Print a received msg
+            msg_payload = json.loads(msg.payload)
+            self.route_device_msg(msg_payload)
+        except:
+            traceback.print_exc()
+            quit(0)
 
     def route_device_msg(self, payload):
         logging.debug('in route_device_msg')
         device = DeviceModel(self.conn, self.cursor)
         device.get_by_id(payload['device_id'])
         logging.debug(device)
-        if payload['command'] == 'set_url':
-            self.device_set_url(device, payload)
+        self.device_cmd(device, payload)
 
-    def device_set_url(self, device, payload):
-        logging.info('Sending device %s cmd %s' %(device, 'set_url'))
-        logging.info("\tDevice url: %s" % payload['url'])
-        response = device.cmd('set_url', payload['url'])
+    def device_cmd(self, device, payload):
+        logging.info('Sending device %s cmd: %s' %(device, payload['command']))
+        if payload['command'] == 'set_url':
+            logging.info("\tDevice url: %s" % payload['url'])
+            response = device.cmd('set_url', {'url': payload['url']})
+
+        elif payload['command'] == 'reboot':
+            logging.info("\tDevice reboot")
+            response = device.cmd('reboot')
+
+        elif payload['command'] == 'display_toggle':
+            logging.info("\tDevice display toggle")
+            response = device.cmd('reboot', {'value': payload['value']})
+
         logging.info(response)
 
 

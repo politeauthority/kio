@@ -1,7 +1,7 @@
 """Device Controller
 
 """
-from flask import Blueprint, render_template, request, redirect
+from flask import Blueprint, render_template, request, redirect, jsonify
 from flask import current_app as app
 
 import requests
@@ -57,6 +57,31 @@ def run() -> str:
         mqtt_handler.publish(payload)
 
     return redirect('/command/')
+
+
+@command.route('/device-reboot', methods=["POST"])
+def device_reboot() -> str:
+    device_id = request.form['device_id']
+    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
+    device = DeviceModel(conn, cursor)
+    device.get_by_id(device_id)
+
+    payload = {
+        'device_id': device.id,
+        'command': 'reboot',
+        'command_type': 'manual'
+    }
+    pub = mqtt_handler.publish(payload)
+    if pub:
+        status = "success"
+    else:
+        status = "failed"
+
+    data = {
+        'status': status
+    }
+
+    return jsonify(data)
 
 
 # End File: kio/kio-server/modules/controllers/command.py

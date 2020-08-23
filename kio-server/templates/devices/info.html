@@ -57,6 +57,7 @@
                 <td><a href="/devices/set/{{device.id}}"> Push URL</td>
               </tr>
             </table>
+            <a id="device-reboot" href="#">Reboot</a>
           </div>
         </div>
       </div>
@@ -64,6 +65,29 @@
 
 
   </div>
+{%endblock%}
+
+{%block javascript%}
+  <script type="text/javascript">
+    $('#device-reboot').click(function(){
+      console.log('reboot');
+      device_reboot();
+    });
+
+
+    function device_reboot(){
+      var data = {
+        "device_id": {{device.id}},
+      }
+      $.ajax({
+        type: "POST",
+        url: '/command/device-reboot',
+        data: data,
+        dataType: 'json'
+      });
+    }
+
+  </script>
 {%endblock%}
 
 <!-- End File: kio/kio-server/templates/devices/info.html

@@ -10,7 +10,7 @@ import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.1h'
+kio_version = 'v0.0.1i'
 app = Flask(__name__)
 
 
@@ -34,8 +34,8 @@ def status() -> str:
     return jsonify(data)
 
 
-@app.route('/set-display')
-def set_display() -> str:
+@app.route('/display-set')
+def display_set() -> str:
     """API route for setting the Kio-Nodes Chromium to load a requested URL, and killing the old
        Chromium tab process.
     """
@@ -58,8 +58,8 @@ def set_display() -> str:
     return jsonify(data)
 
 
-@app.route('/enable-display')
-def enable_display() -> str:
+@app.route('/toggle-display')
+def display_toggle() -> str:
     """API route to turn on  or off the display. Keep in mind, the Kio-Node does not keep track of
        the state of the display on it's own.
     """
@@ -110,7 +110,10 @@ def reboot() -> str:
 
 
 if __name__ == '__main__':
-    port = sys.argv[1]
+    if len(sys.argv) > 1
+        port = sys.argv[1]
+    else:
+        port = 7001
     app.secret_key = 'super secret key'
     app.run(host="0.0.0.0", port=port, debug=True)
 
