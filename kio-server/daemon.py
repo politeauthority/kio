@@ -93,11 +93,11 @@ class Daemon:
 
     def device_cmd(self, device, payload):
         logging.info('Sending device %s cmd: %s' %(device, payload['command']))
-        if payload['command'] == 'set_url':
+        if payload['command'] == 'display_set':
             logging.info("\tDevice url: %s" % payload['url'])
-            response = device.cmd('set_url', {'url': payload['url']})
+            response = device.cmd('display_set', {'url': payload['url']})
 
-        elif payload['command'] == 'reboot':
+        elif payload['command'] == 'display_reboot':
             logging.info("\tDevice reboot")
             response = device.cmd('reboot')
 

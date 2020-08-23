@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 MQTT_TOPIC = os.environ.get('KIO_SERVER_MQTT_TOPIC')
 BROKER_ADDRESS = '192.168.50.10'
 API_ADDRESS = "http://%s:%s" % (BROKER_ADDRESS, '5009')
-TEST_DEVICE_ID = 4
+TEST_DEVICE_ID = 2
 
 
 def run(device_id):

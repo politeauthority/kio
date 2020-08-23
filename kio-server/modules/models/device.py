@@ -58,18 +58,20 @@ class Device(BaseEntityMeta):
         dc.type = cmd_type
         payload = {}
 
-        if dc.type == 'set_url':
+        if dc.type == 'display_set':
             set_url = recieved_payload['url']
             device_url = "%s/display-set" % self.address
             dc.command = "%s?url=%s" % (device_url, set_url)
             payload = {'url': set_url}
-        elif dc.type == 'reboot':
+        elif dc.type == 'display_reboot':
             device_url = "%s/reboot" % self.address
             dc.command = device_url
         elif dc.type == 'display_toggle':
             value = recieved_payload['value']
             device_url = "%s/toggle-display?value=%s" % (self.address, value)
             dc.command = device_url
+        else:
+            raise Exception("Unknown Device Command: %s" % dc.type) 
 
         response = requests.get(device_url, payload)
 
