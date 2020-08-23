@@ -30,5 +30,4 @@ RUN apk add --virtual \
 # Install Kio Python requirements
 RUN pip install -r /app/requirements.txt
 
-CMD tail -f /dev/null
-# CMD cd kio-server && gunicorn -b 0.0.0.0:5000 kio-server:app
+CMD gunicorn -b 0.0.0.0:8000 kio-server:app

@@ -13,58 +13,10 @@ page the kio-nodes display manually, or create playlists to cycle through.
 
 
 ## Kio Node
-The Kio Node web app api runs on every kiosk you'll want to control.
-### Endpoints
-#### /set-display
-Set display is the work horse of `kio_node`. This URI will set the chromium session to load the
-requested url. To set the chromium web page, something like the following will do that.
-Example:
-```
-http://192.168.1.20:8001/set-display?url=https://www.google.com
-```
-
-## Requirements
-python3-pip
-
-
-## Install
-### Kio Node
-Install the kio-node requirements
-```
-pip3 install -r kio-node/requirements.txt
-```
-
-Setup the kio-node app to run on boot. In `/etc/rc.local` set gunicorn to run the server at boot as the `pi` user on port `8001`
-```
-cd /home/pi/apps/kio/kio-node && gunicorn kio-node:app -b0.0.0.0:8001 --daemon
-```
+Current version: `v0.0.1g`
+The Kio Node web app api runs on every kiosk you'll want to control. For more details on Kio-Node
+such as documentation and installation guide, check out the [Kio-Node README.md](kio-node/README.md)
 
 ### Kio Server
-
-Install the kio-server requirements
-```
-pip3 install -r kio-server/requirements.txt
-```
-
-Setup the kio-server app to run on boot. In `/etc/rc.local` set gunicorn to run the server at boot as the `pi` user on port `8000`
-```
-su pi -c 'cd /home/pi/kio/kio-server && export KIO_SERVER_CONFIG="prod" && gunicorn kio-server:app -b0.0.0.0:8000 --daemon'
-```
-
-Setup the kio-server cron job which manages scheduling displays and other house keeping.
-
-```console
-*/2 * * * * python3 /home/pi/kio/kio-server/cron.py >/dev/null 2>&1
-```
-
-
-```console
-docker build . -t="kio-server:dev"
-docker run \
-    --name kio-server-dev \
-    -v /home/pi/repos/kio-server/:/app \
-    --net=host \
-    -d \
-    --rm \
-    kio-server:dev
-```
+Kio-Server is the controller system for all Kio-Nodes on your network. For more details on Kio-Server
+such as documentation and installation guide, check out the [Kio-Server README.md](kio-server/README.md)
