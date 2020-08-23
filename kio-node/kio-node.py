@@ -10,7 +10,7 @@ import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.1i'
+kio_version = 'v0.0.2'
 app = Flask(__name__)
 
 
@@ -110,7 +110,7 @@ def reboot() -> str:
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1
+    if len(sys.argv) > 1:
         port = sys.argv[1]
     else:
         port = 7001
