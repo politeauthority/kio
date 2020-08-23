@@ -40,13 +40,42 @@ def random_url():
     return urls[random.randint(0, len(urls) - 1)]
 
 
-def mqtt_pub():
+def mqtt_pub_url():
     device_ids = [TEST_DEVICE_ID]
     for device_id in device_ids:
         payload = {
             'device_id': device_id,
             'command': 'set_url',
             'url': random_url()
+        }
+        client = mqtt.Client('kio')
+        client.connect(BROKER_ADDRESS, keepalive=60)
+        client.publish(MQTT_TOPIC, payload=json.dumps(payload), retain=False)
+        print('Published message')
+        print("\t Topic: %s \n\t%s" % (MQTT_TOPIC, payload))
+
+
+def mqtt_pub_reboot():
+    device_ids = [TEST_DEVICE_ID]
+    for device_id in device_ids:
+        payload = {
+            'device_id': device_id,
+            'command': 'reboot',
+        }
+        client = mqtt.Client('kio')
+        client.connect(BROKER_ADDRESS, keepalive=60)
+        client.publish(MQTT_TOPIC, payload=json.dumps(payload), retain=False)
+        print('Published message')
+        print("\t Topic: %s \n\t%s" % (MQTT_TOPIC, payload))
+
+
+def mqtt_pub_toggle(value=0):
+    device_ids = [TEST_DEVICE_ID]
+    for device_id in device_ids:
+        payload = {
+            'device_id': device_id,
+            'command': 'display_toggle',
+            'value': value
         }
         client = mqtt.Client('kio')
         client.connect(BROKER_ADDRESS, keepalive=60)
@@ -67,5 +96,7 @@ def api_reboot():
 if __name__ == "__main__":
     # api_reboot()
     # mqtt_sub()
-    mqtt_pub()
+    # mqtt_pub_url()
+    # mqtt_pub_reboot()
+    mqtt_pub_toggle(1)
     # run(sys.argv[1])

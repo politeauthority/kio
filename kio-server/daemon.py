@@ -103,7 +103,7 @@ class Daemon:
 
         elif payload['command'] == 'display_toggle':
             logging.info("\tDevice display toggle")
-            response = device.cmd('reboot', {'value': payload['value']})
+            response = device.cmd('display_toggle', {'value': payload['value']})
 
         logging.info(response)
 

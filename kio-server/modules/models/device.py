@@ -68,7 +68,7 @@ class Device(BaseEntityMeta):
             dc.command = device_url
         elif dc.type == 'display_toggle':
             value = recieved_payload['value']
-            device_url = "%s/toggle-display" % self.address
+            device_url = "%s/toggle-display?value=%s" % (self.address, value)
             dc.command = device_url
 
         response = requests.get(device_url, payload)
