@@ -10,7 +10,7 @@ import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.1g'
+kio_version = 'v0.0.1h'
 app = Flask(__name__)
 
 
@@ -55,6 +55,46 @@ def set_display() -> str:
         'set_url': set_url,
         'url': url,
     }
+    return jsonify(data)
+
+
+@app.route('/enable-display')
+def enable_display() -> str:
+    """API route to turn on  or off the display. Keep in mind, the Kio-Node does not keep track of
+       the state of the display on it's own.
+    """
+    # Get the display service
+    display_service = request.args.get('service')
+    if not display_service:
+        display_service = "vcgencmd display_power"
+    elif display_service == 'tvservice':
+        display_service = 'tvservice'
+
+    # Get the value we're setting the display to
+    display_value = request.args.get('value')
+    cmd_value = 1
+    if str(display_value) in ['0', 'off', 'false']:
+        cmd_value = 0
+
+    # Set the proper value str based on the display service being accessed.
+    if display_service == 'tvservice':
+        if cmd_value == 1:
+            cmd_value = '--preferred'
+        else:
+            cmd_value = '--off'
+
+    # Run the command and report the results
+    result = utils.shell('%s %s' % (display_service, cmd_value))
+    status = 'success'
+    if not result:
+        status = 'failed'
+
+    data = {
+        'display_service': display_service,
+        'value': cmd_value,
+        'status': status
+    }
+
     return jsonify(data)
 
 
