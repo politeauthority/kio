@@ -35,7 +35,6 @@ class DeviceCmd(Base):
         """Device representation show the command if we have one."""
         return "<DeviceCmd: %s>" % self.command
 
-
     def last_command(self, device_id):
         qry = """
             SELECT *

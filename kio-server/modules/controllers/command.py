@@ -1,4 +1,4 @@
-"""Device Controller
+"""Command Controller
 
 """
 from flask import Blueprint, render_template, request, redirect

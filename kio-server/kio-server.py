@@ -8,6 +8,7 @@ import sys
 from flask import Flask, jsonify, request, render_template, g
 
 from modules import db
+from modules.controllers.api import api as ctrl_api
 from modules.controllers.devices import devices as ctrl_devices
 from modules.controllers.command import command as ctrl_command
 from modules.controllers.urls import urls as ctrl_urls
@@ -40,6 +41,7 @@ def index() -> str:
     
 def register_blueprints(app: Flask):
     """Connect the blueprints to the router."""
+    app.register_blueprint(ctrl_api)
     app.register_blueprint(ctrl_devices)
     app.register_blueprint(ctrl_command)
     app.register_blueprint(ctrl_urls)

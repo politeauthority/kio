@@ -12,7 +12,6 @@ from ..collections.urls import Urls as UrlsCollect
 urls = Blueprint('Urls', __name__, url_prefix='/urls')
 
 
-
 @urls.route('/')
 def index() -> str:
     """Urls roster page."""

@@ -37,8 +37,7 @@ class Base:
         return prestines
 
     def get_by_ids_keyed(self, model_ids: list, key_field: str = "id") -> dict:
-        """
-           Get models instances by their ids from the database, returned as a dict, keyed off of
+        """Get models instances by their ids from the database, returned as a dict, keyed off of
            the model id or any model attribute supplied by `key_field`.
         """
         prestines = self.get_by_ids(model_ids)
