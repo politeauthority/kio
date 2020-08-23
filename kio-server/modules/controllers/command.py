@@ -7,6 +7,7 @@ from flask import current_app as app
 import requests
 
 from .. import db
+from .. import mqtt_handler
 from ..models.device import Device as DeviceModel
 from ..collections.devices import Devices as DevicesCollect
 
@@ -36,17 +37,24 @@ def run() -> str:
     conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
     cdevices = DevicesCollect(conn, cursor)
     
+    # Determine the devices to command
     cmd_devices = request.form['cmd_now_device']
-    cmd_url = request.form['cmd_now_url']
     if cmd_devices == 'all':
         the_devices = cdevices.get_all()
+    else:
+        the_devices = cdevices.get_by_ids([cmd_devices])
 
-    success = True
+
+    # Send the commands to the selected devices
+    cmd_url = request.form['cmd_now_url']
     for device in the_devices:
-        device.conn = conn
-        device.cursor = cursor
-        if not device.cmd(cmd_url, "manual"):
-            success = False
+        payload = {
+            'device_id': device.id,
+            'url': cmd_url,
+            'command': 'set_url',
+            'command_type': 'manual'
+        }
+        mqtt_handler.publish(payload)
 
     return redirect('/command/')
 

@@ -51,11 +51,11 @@ class Device(BaseEntityMeta):
         """Device representation show the name if we have one."""
         return "<Device: %s>" % self.name
 
-    def cmd(self, url, type):
+    def cmd(self, cmd_type: str, url: str=None):
         """ """
         dc = DeviceCmd(self.conn, self.cursor)
         dc.device_id = self.id
-        dc.type = type
+        dc.type = cmd_type
         dc.command = url
 
         device_url = "%s/set-display" % self.address
@@ -63,10 +63,8 @@ class Device(BaseEntityMeta):
         payload = {
             'url': url
         }
-        print(url)
-        print(payload)
+        dc.command = "%s?url=%s" % (device_url, payload['url'])
         response = requests.get(device_url, payload)
-        print(response)
 
         if response.status_code not in ['200']:
             dc.status = "failed"
