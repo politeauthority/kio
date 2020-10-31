@@ -51,7 +51,7 @@ def run() -> str:
         payload = {
             'device_id': device.id,
             'url': cmd_url,
-            'command': 'set_url',
+            'command': 'display_set',
             'command_type': 'manual'
         }
         mqtt_handler.publish(payload)

@@ -92,18 +92,24 @@ class Daemon:
         self.device_cmd(device, payload)
 
     def device_cmd(self, device, payload):
-        logging.info('Sending device %s cmd: %s' %(device, payload['command']))
-        if payload['command'] == 'display_set':
+        print("\n\n")
+        print(payload)
+        print("\n\n")
+        logging.info('Sending device %s cmd: %s' %( device, payload['cmd']))
+        if payload['cmd'] == 'display_set':
             logging.info("\tDevice url: %s" % payload['url'])
             response = device.cmd('display_set', {'url': payload['url']})
 
-        elif payload['command'] == 'display_reboot':
+        elif payload['cmd'] == 'display_reboot':
             logging.info("\tDevice reboot")
-            response = device.cmd('reboot')
+            response = device.cmd('display_reboot')
 
-        elif payload['command'] == 'display_toggle':
+        elif payload['cmd'] == 'display_toggle':
             logging.info("\tDevice display toggle")
             response = device.cmd('display_toggle', {'value': payload['value']})
+        else:
+            logging.error('Bad Payload')
+            logging.debug(payload)
 
         logging.info(response)
 

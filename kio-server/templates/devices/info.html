@@ -52,42 +52,91 @@
                 <td><b>Last Seen</b></td>
                 <td><code>{{device.last_seen}}</code></td>
               </tr>
-              <tr>
-                <td></td>
-                <td><a href="/devices/set/{{device.id}}"> Push URL</td>
-              </tr>
             </table>
-            <a id="device-reboot" href="#">Reboot</a><br/>
-            <a id="device-sleep" href="#">Sleep</a><br/>
-            <a id="device-wakeup" href="#">Wakeup</a><br/>
           </div>
         </div>
       </div>
     </div><!-- END Device Info -->
 
 
+    <!-- Device Control -->
+    <div class="col-xl-6 col-lg-6">
+      <div class="card shadow mb-4">
+        <!-- Card Header -->
+        <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+          <h6 class="m-0 font-weight-bold text-primary">
+            Control
+          </h6>
+        </div>
+
+        <!-- Card Body -->
+        <div class="card-body">
+          <form id="cmd_form" data-device-id="{{device.id}}">
+          <div class="input-group">
+            <input id="cmd_go_url" type="text" class="form-control">
+            <div class="input-group-append">
+              <button id="cmd_go" type="button" class="cmd btn btn-primary">Go</button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <a id="cmd_reboot" class="cmd btn btn-primary" href="#">Reboot</a><br/>
+            <a id="cmd_sleep" class="cmd btn btn-primary" href="#">Sleep</a><br/>
+            <a id="cmd_wakeup" class="cmd btn btn-primary" href="#">Wakeup</a><br/>
+          </div>
+        </div>
+      </div>
+    </div><!-- END Device Info -->
+
   </div>
 {%endblock%}
 
 {%block javascript%}
   <script type="text/javascript">
-    $('#device-reboot').click(function(){
-      console.log('reboot');
-      device_reboot();
+
+
+  $( document ).ready(function() {
+    console.log( "ready!" );
+
+
+
+    // Function to handle ajax requests to Kio API
+    $(".cmd").click(function(){
+      console.log('Clicked!');
+      console.log($(this));
+
+      var button = $(this),
+          data = {};
+
+      data['device_id'] = $("#cmd_form").attr("data-device-id");
+      if($(this).attr('id') == 'cmd_go'){
+        data['cmd'] = 'display_set';
+        data['url'] = $("#cmd_go_url").val();
+      } else if(button.attr('id') == "cmd_sleep"){
+        data['cmd'] = 'display_toggle';
+        data['value'] = 0;
+      } else if(button.attr('id') == "cmd_wakeup"){
+        data['cmd'] = 'display_toggle';
+        data['value'] = 1;
+      } else if(button.attr('id') == "cmd_reboot"){
+        data['cmd'] = 'display_reboot';
+      }
+      console.log(JSON.stringify(data));
+      $.ajax({
+        type: "POST",
+        url: '/api/cmd',
+        data: JSON.stringify(data),
+        contentType: "application/json",
+        dataType: "json",
+      });
+
     });
 
 
-    function device_reboot(){
-      var data = {
-        "device_id": {{device.id}},
-      }
-      $.ajax({
-        type: "POST",
-        url: '/command/device-reboot',
-        data: data,
-        dataType: 'json'
-      });
-    }
+  });
+
+
+
 
   </script>
 {%endblock%}

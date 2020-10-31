@@ -17,6 +17,6 @@ Current version: `v0.0.1g`
 The Kio Node web app api runs on every kiosk you'll want to control. For more details on Kio-Node
 such as documentation and installation guide, check out the [Kio-Node README.md](kio-node/README.md)
 
-### Kio Server
+## Kio Server
 Kio-Server is the controller system for all Kio-Nodes on your network. For more details on Kio-Server
 such as documentation and installation guide, check out the [Kio-Server README.md](kio-server/README.md)

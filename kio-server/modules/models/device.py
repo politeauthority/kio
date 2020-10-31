@@ -67,8 +67,11 @@ class Device(BaseEntityMeta):
             device_url = "%s/reboot" % self.address
             dc.command = device_url
         elif dc.type == 'display_toggle':
-            value = recieved_payload['value']
-            device_url = "%s/toggle-display?value=%s" % (self.address, value)
+            payload = {
+                'value': recieved_payload['value'],
+                'command': 'display_toggle',
+            }
+            device_url = "%s/toggle-display" % self.address
             dc.command = device_url
         else:
             raise Exception("Unknown Device Command: %s" % dc.type) 
