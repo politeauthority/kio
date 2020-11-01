@@ -343,7 +343,6 @@ class Base:
             #     continue
 
             if field['type'] == 'datetime' and type(class_var_value) != datetime:
-                print(field)
                 setattr(
                     self,
                     class_var_name,

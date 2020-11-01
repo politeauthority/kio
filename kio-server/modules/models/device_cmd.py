@@ -28,6 +28,19 @@ class DeviceCmd(Base):
                 'name': 'status',
                 'type': 'str'
             },
+            {
+                'name': 'received_ts',
+                'type': 'datetime'
+            },
+            {
+                'name': 'mqtt_recieved_ts',
+                'type': 'datetime'
+            },
+            {
+                'name': 'completed_ts',
+                'type': 'datetime'
+            },
+
         ]
         self.setup()
 

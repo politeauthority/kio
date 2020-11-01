@@ -1,6 +1,7 @@
 """Device Model
 
 """
+import arrow
 import requests
 
 from .base_entity_meta import BaseEntityMeta
@@ -44,6 +45,10 @@ class Device(BaseEntityMeta):
                 'name': 'online',
                 'type': 'bool'
             },
+            {
+                'name': 'server_version',
+                'type': 'str'
+            },
         ]
         self.setup()
 
@@ -51,46 +56,10 @@ class Device(BaseEntityMeta):
         """Device representation show the name if we have one."""
         return "<Device: %s>" % self.name
 
-    def cmd(self, cmd_type: str, recieved_payload: dict=None):
-        """ """
-        dc = DeviceCmd(self.conn, self.cursor)
-        dc.device_id = self.id
-        dc.type = cmd_type
-        payload = {}
-
-        if dc.type == 'display_set':
-            set_url = recieved_payload['url']
-            device_url = "%s/display-set" % self.address
-            dc.command = "%s?url=%s" % (device_url, set_url)
-            payload = {'url': set_url}
-        elif dc.type == 'display_reboot':
-            device_url = "%s/reboot" % self.address
-            dc.command = device_url
-        elif dc.type == 'display_toggle':
-            payload = {
-                'value': recieved_payload['value'],
-                'command': 'display_toggle',
-            }
-            device_url = "%s/toggle-display" % self.address
-            dc.command = device_url
-        else:
-            raise Exception("Unknown Device Command: %s" % dc.type) 
-
-        response = requests.get(device_url, payload)
-
-        if response.status_code not in ['200']:
-            dc.status = "failed"
-        dc.status = "succeeded"
-        dc.save()
-        return dc.status
-
     def last_command(self):
         dc = DeviceCmd(self.conn, self.cursor)
         dc.last_command(self.id)
         return dc
-
-
-
 
 
 # End File: kio/kio-server/modules/models/device.py

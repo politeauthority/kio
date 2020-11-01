@@ -10,11 +10,13 @@ import logging.config
 import os
 import traceback
 
+import arrow
 import requests
 import paho.mqtt.client as mqtt
 
 from modules import db
 from modules.models.device import Device as DeviceModel
+from modules.models.device_cmd import DeviceCmd as DeviceCmdModel
 
 BROKER_ADDRESS = os.environ.get('KIO_SERVER_MQTT_HOST')
 MQTT_TOPIC = os.environ.get('KIO_SERVER_MQTT_TOPIC')
@@ -46,10 +48,11 @@ class Daemon:
             level=0,
             handlers=[logging.StreamHandler()])
 
-        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.INFO)
         logging.debug('Logging enabled - debug')
         # Squelch urlib3/requests debug logs
         logging.getLogger("requests").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
         return True
 
     def run(self):
@@ -74,46 +77,96 @@ class Daemon:
         client.subscribe(MQTT_TOPIC)
         return True
 
-    def on_message(self, client, userdata, msg):
+    def on_message(self, client, userdata, msg) -> bool:
         """The callback for when a PUBLISH message is received from the server. """
         try:
-            logging.info("Message received-> " + msg.topic + " " + str(msg.payload))  # Print a received msg
+            logging.info("Message received -> " + msg.topic + " " + str(msg.payload))  # Print a received msg
             msg_payload = json.loads(msg.payload)
-            self.route_device_msg(msg_payload)
+
+            valid_cmd_types = ["device"]
+            if 'cmd_type' not in msg_payload:
+                print('Error: MQTT payload does not contain a "cmd_type".')
+                return False
+            # If the command type is not a valid command return False
+            if msg_payload['cmd_type'] not in valid_cmd_types:
+                print('Error: Unknown MQTT payload cmd_type "%s"' % msg_payload['cmd_type'])
+                return False
+
+            self.handle_device_cmd(msg_payload)
+            return True
+
         except:
             traceback.print_exc()
             quit(0)
 
-    def route_device_msg(self, payload):
-        logging.debug('in route_device_msg')
+    def handle_device_cmd(self, payload):
+        """ """
+        device_cmd = DeviceCmdModel(self.conn, self.cursor)
+        device_cmd.get_by_id(payload['device_cmd_id'])
+
+        device_cmd.status = "recieved"
+        device_cmd.mqtt_recieved_ts = arrow.utcnow()
+        device_cmd.save()
+
         device = DeviceModel(self.conn, self.cursor)
-        device.get_by_id(payload['device_id'])
-        logging.debug(device)
-        self.device_cmd(device, payload)
+        device.get_by_id(device_cmd.device_id)
+        return self.issue_cmd_to_device(device, device_cmd)
 
-    def device_cmd(self, device, payload):
-        print("\n\n")
-        print(payload)
-        print("\n\n")
-        logging.info('Sending device %s cmd: %s' %( device, payload['cmd']))
-        if payload['cmd'] == 'display_set':
-            logging.info("\tDevice url: %s" % payload['url'])
-            response = device.cmd('display_set', {'url': payload['url']})
+    def issue_cmd_to_device(self, device, device_cmd) -> bool:
+        """Fire the command off the Kio-Node's API"""
+        if device_cmd.type == 'display_set':
+            device_url = "%s/display-set" % device.address
+            payload = {'url': device_cmd.command}
 
-        elif payload['cmd'] == 'display_reboot':
-            logging.info("\tDevice reboot")
-            response = device.cmd('display_reboot')
+        elif device_cmd.type == 'display_toggle':
+            device_url = "%s/display-toggle" % device.address
+            payload = {'value': device_cmd.command}
 
-        elif payload['cmd'] == 'display_toggle':
-            logging.info("\tDevice display toggle")
-            response = device.cmd('display_toggle', {'value': payload['value']})
+        elif device_cmd.type == 'display_reboot':
+            device_url = "%s/reboot" % device.address
+            payload = {}
+
         else:
-            logging.error('Bad Payload')
-            logging.debug(payload)
+            logging.error('Unknown device cmd: "%s"' % device_cmd.type)
+            device_cmd.status = "failed - bad device cmd"
+            device_cmd.save()
+            return False
 
-        logging.info(response)
+        logging.info('Sending command to Kio-Node: %s - %s' % (device, device_cmd.type))
+        now = arrow.utcnow()
+        node_response = requests.get(device_url, payload)
+
+        # Handle node response errors
+        if node_response.status_code not in [200]:
+            logging.error('Node Responded with status code: %s' % node_response.status_code)
+            device_cmd.status = 'failed - node response %s' % node_response.status_code
+            device_cmd.save()
+            device.last_seen = now
+            device.updated_ts = now
+            device.save()
+            return False
+
+        node_response_json = node_response.json()
+
+        if node_response_json['status'] == 'success':
+            device_cmd.status = 'complete'
+            device_cmd.completed_ts = arrow.utcnow()
+        device_cmd.save()
+
+        # Update the device record with info from the response
+        device.last_seen = now
+        device.updated_ts = now
+        if 'kio-node' in node_response_json:
+            device.server_version = node_response_json['kio-node']
+        device.save()
 
 
+        if device_cmd.status == 'complete':
+            logging.info('Request status: success')
+            return True
+        else:
+            logging.warning('Request status: failed')
+            return False
 
 
 def get_config():

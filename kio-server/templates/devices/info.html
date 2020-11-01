@@ -111,7 +111,7 @@
       data['device_id'] = $("#cmd_form").attr("data-device-id");
       if($(this).attr('id') == 'cmd_go'){
         data['cmd'] = 'display_set';
-        data['url'] = $("#cmd_go_url").val();
+        data['value'] = $("#cmd_go_url").val();
       } else if(button.attr('id') == "cmd_sleep"){
         data['cmd'] = 'display_toggle';
         data['value'] = 0;
