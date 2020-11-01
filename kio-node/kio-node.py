@@ -10,7 +10,7 @@ import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.2'
+kio_version = 'v0.0.2a'
 app = Flask(__name__)
 
 
@@ -107,6 +107,16 @@ def reboot() -> str:
         'status': 'success',
     }
     return jsonify(data)
+
+
+@app.errorhandler(404)
+def page_not_found(e: str):
+    """404 Error response."""
+    data = {
+        "status": "failed",
+        "error": "404 - Not Found"
+    }
+    return jsonify(data), 404
 
 
 if __name__ == '__main__':
