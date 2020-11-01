@@ -10,7 +10,7 @@ import uptime
 
 from modules import utils
 
-kio_version = 'v0.0.2a'
+kio_version = 'v0.0.2b'
 app = Flask(__name__)
 
 
@@ -58,7 +58,7 @@ def display_set() -> str:
     return jsonify(data)
 
 
-@app.route('/toggle-display')
+@app.route('/display-toggle')
 def display_toggle() -> str:
     """API route to turn on  or off the display. Keep in mind, the Kio-Node does not keep track of
        the state of the display on it's own.
