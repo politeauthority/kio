@@ -1,0 +1,56 @@
+<!-- Device Info -->
+
+{% extends "layout.html" %}
+
+{%block head%}
+  <link href="https://cdn.jsdelivr.net/gh/gitbrent/bootstrap4-toggle@3.6.1/css/bootstrap4-toggle.min.css" rel="stylesheet">
+{%endblock%}
+
+{% block content %}
+
+<!-- Device info header -->
+<div class="row">
+  <div class="col-lg-6">
+    <div class="d-sm-flex align-items-center justify-content-between mb-4">
+      <h1 class="h3 mb-0 text-gray-800">
+        About
+      </h1>
+    </div>
+  </div>
+  <div class="col-lg-6 text-right">
+    <!-- <i class="fas fa-bolt"></i> -->
+    <a id="device-favorite" href="#" class="btn btn-warning btn-circle btn-lg">
+      <i class="fa"></i>
+    </a>
+  </div>
+</div>
+<!-- End Device info header -->
+
+  <!-- Content Row -->
+  <div class="row">
+    <!-- About -->
+    <div class="col-xl-12 col-lg-12">
+      <div class="card shadow mb-4">
+        <!-- Card Header -->
+        <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+          <h6 class="m-0 font-weight-bold text-primary">
+            Info
+          </h6>
+        </div>
+
+        <!-- Card Body -->
+        <div class="card-body">
+          Nothing to put here yet.
+          <a href="/about/debug">DEBUG</a>
+        </div>
+      </div>
+    </div><!-- END About Info -->
+
+
+
+  </div> <!-- END content row -->
+{%endblock%}
+
+
+
+<!-- End File: kio/kio-server/templates/about/index.html

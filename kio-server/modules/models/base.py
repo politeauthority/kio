@@ -1,4 +1,4 @@
-"""Base Model
+"""Base Model v 1.0.3
 Parent class for all models to inherit, providing methods for creating tables, inserting, updating,
 selecting and deleting data.
 
@@ -150,6 +150,23 @@ class Base:
 
         return True
 
+    def get_by_field(self, field: str, phrase: str) -> bool:
+        """Get a single model object from db based on an arbitrary object field."""
+        sql = """
+            SELECT *
+            FROM %s
+            WHERE
+                `%s` = "%s"; """ % (self.table_name, field, phrase)
+        print("\n")
+        print(sql)
+        print("\n")
+        self.cursor.execute(sql)
+        raw = self.cursor.fetchone()
+        if not raw:
+            return False
+        self.build_from_list(raw)
+        return True
+
     def get_last(self) -> bool:
         """Get the last created model."""
         sql = """
@@ -170,6 +187,15 @@ class Base:
            possible.
            :param raw: The raw data from the database to be converted to model data.
         """
+        if len(self.total_map) != len(raw):
+            logging.error('Model %s field map (%s) and total raw fields (%s) do NOT match.' % (
+                self,
+              len(self.total_map),
+              len(raw)))
+            logging.error('Field Map: %s' % str(self.total_map))
+            logging.error('Raw Record: %s' % str(raw))
+            return False
+
         count = 0
         for field in self.total_map:
             field_name = field['name']
@@ -208,6 +234,35 @@ class Base:
                 continue
             field_sql += "`%s`, " % field['name']
         return field_sql[:-2]
+
+
+    def unpack(self) -> dict:
+      """Unpack a serial model object into a flat dictionary of  the model's keys and values."""
+      unpack = {}
+
+      unpack['id'] = self.id
+      # Unpack regular fields.
+      for field in self.field_map:
+          class_field_var = getattr(self, field['name'])
+          if class_field_var:
+              # Handle DateTimes
+              if isinstance(class_field_var, datetime):
+                  unpack[field['name']] = class_field_var.strftime("%Y-%m-%d %H:%M:%S")
+              else:
+                  unpack[field['name']] = class_field_var
+
+          # Unpack false bools
+          elif class_field_var == 0 and field['type'] == 'bool':
+              unpack[field['name']] = False
+
+          # Unpack 0 ints
+          elif class_field_var == 0 and field['type'] == 'int':
+              unpack[field['name']] = 0
+
+          else:
+              unpack[field['name']] = None
+
+      return unpack
 
     def get_parmaterized_num(self, skip_fields: list = ['id']) -> str:
         """Generates the number of parameterized "?" for the sql lite parameterization."""
@@ -420,7 +475,7 @@ class Base:
         field_sql = field_sql[:-1]
         return field_sql
 
-    def _xlate_field_type(self, field_type):
+    def _xlate_field_type(self, field_type) -> str:
         """Translates field types into sql lite column types.
            @todo: create better class var for xlate map.
         """
@@ -430,9 +485,13 @@ class Base:
             return 'DATETIME'
         elif field_type[:3] == 'str':
             return 'VARCHAR(200)'
+        elif field_type == 'text':
+            return 'text'
         elif field_type == 'bool':
             return 'BOOLEAN'
         elif field_type == 'float':
             return 'DECIMAL(10, 5)'
+        else:
+            raise AttributeError("Unsupported field type %s" % field_type)
 
 # End File: lan-nanny/lan_nanny/modules/models/base.py

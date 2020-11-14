@@ -35,6 +35,11 @@ def _parse_request(data):
     return json.loads(ret_data)
 
 
+def _parse_devices(payload):
+    if 'device_id' in payload:
+        return [payload['device_id']]
+
+
 def _create_device_cmds(devices, payload) -> list:
     """Create the DeviceCmd records, defining a new command that has been received from the API. """
     conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
@@ -47,7 +52,7 @@ def _create_device_cmds(devices, payload) -> list:
         device_cmd.type = payload['cmd']
         if 'value' in payload:
             device_cmd.command = payload['value']
-        device_cmd.received_ts = now
+        device_cmd.api_received_ts = now
         device_cmd.status = 'issued'
         device_cmd.save()
 
@@ -77,9 +82,5 @@ def _send_cmd_to_mqtt(device_cmd_ids: list) -> dict:
 
     return True
 
-
-def _parse_devices(payload):
-    if 'device_id' in payload:
-        return [payload['device_id']]
 
 # End File: kio/kio-server/modules/controllers/api.py

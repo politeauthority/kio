@@ -57,3 +57,19 @@ docker run \
    python3 daemon.py
 
 ```
+
+
+## API
+The Kio Server api lives at the Kio Server lives at the server's url.
+
+### /api/cmd
+This endpoint exists to ultimately send commands to Kio-Nodes. It does this by creating a `device_cmd` record and sending it to the MQTT broker.
+#### Arguments
+`device_id` The ID of the device to issue a command to. *Required*
+`cmd` The command type to send to a device.
+    Accepted commands
+  - `display_set` Used to tell a Kio-Node to set the display to a particular URL which is defined in the payload's `value`.
+  - `display_toggle` Turns a display on/off. Requires the `value` argument to contain either `0` for off or `1` for on. *Only works for some device types.*
+  - `display_reboot` Tells a device to reboot, does not require any `value`.
+
+`value` The value to send to the api for the command. If the command is `display_set` this would be the url you wish to display to load.

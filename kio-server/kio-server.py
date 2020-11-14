@@ -13,6 +13,7 @@ from modules.controllers.devices import devices as ctrl_devices
 from modules.controllers.command import command as ctrl_command
 from modules.controllers.urls import urls as ctrl_urls
 from modules.controllers.playlists import playlists as ctrl_playlists
+from modules.controllers.about import about as ctrl_about
 from modules.controllers.settings import settings as ctrl_settings
 
 
@@ -47,6 +48,7 @@ def register_blueprints(app: Flask):
     app.register_blueprint(ctrl_command)
     app.register_blueprint(ctrl_urls)
     app.register_blueprint(ctrl_playlists)
+    app.register_blueprint(ctrl_about)
     app.register_blueprint(ctrl_settings)
 
 

@@ -19,6 +19,7 @@ from modules.models.device import Device as DeviceModel
 from modules.models.device_cmd import DeviceCmd as DeviceCmdModel
 
 BROKER_ADDRESS = os.environ.get('KIO_SERVER_MQTT_HOST')
+BROKER_PORT = 1883
 MQTT_TOPIC = os.environ.get('KIO_SERVER_MQTT_TOPIC')
 
 
@@ -60,25 +61,28 @@ class Daemon:
            kio.
         """
         self.setup()
-        client = mqtt.Client("kio-sub")  # Create instance of client with client ID “digi_mqtt_test”
+        client = mqtt.Client()  # Create instance of client with client ID “digi_mqtt_test”
+        client.connect(BROKER_ADDRESS, BROKER_PORT)
+
         client.on_connect = self.on_connect  # Define callback function for successful connection
         client.on_message = self.on_message  # Define callback function for receipt of a message
-        # client.connect("m2m.eclipse.org", 1883, 60)  # Connect to (broker, port, keepalive-time)
-        client.connect(BROKER_ADDRESS)
-        client.loop_forever()  # Start networking daemon
+        client.subscribe(MQTT_TOPIC, 1)
+        loop = client.loop_forever()  # Start networking daemon
 
     def on_connect(self, client, userdata, flags, rc) -> bool:
         """The callback for when the client connects to the broker. """
         if rc == 0:
-            logging.info("Connected to MQTT broker successfully")
+            logging.info(
+                "Connected to MQTT broker %s subscribing to topic: %s" % (BROKER_ADDRESS, MQTT_TOPIC))
         else:
             logging.error("Failed connecting to MQTT broker %s" % BROKER_ADDRESS)
             return False
-        client.subscribe(MQTT_TOPIC)
+        
         return True
 
     def on_message(self, client, userdata, msg) -> bool:
         """The callback for when a PUBLISH message is received from the server. """
+        print('GOT MESSAGE')
         try:
             logging.info("Message received -> " + msg.topic + " " + str(msg.payload))  # Print a received msg
             msg_payload = json.loads(msg.payload)
@@ -104,7 +108,7 @@ class Daemon:
         device_cmd = DeviceCmdModel(self.conn, self.cursor)
         device_cmd.get_by_id(payload['device_cmd_id'])
 
-        device_cmd.status = "recieved"
+        device_cmd.status = "received"
         device_cmd.mqtt_recieved_ts = arrow.utcnow()
         device_cmd.save()
 
@@ -117,14 +121,17 @@ class Daemon:
         if device_cmd.type == 'display_set':
             device_url = "%s/display-set" % device.address
             payload = {'url': device_cmd.command}
+            log_text = "%s - %s" % (device_cmd.type, device_cmd.command)
 
         elif device_cmd.type == 'display_toggle':
             device_url = "%s/display-toggle" % device.address
             payload = {'value': device_cmd.command}
+            log_text = "%s - %s" % (device_cmd.type, device_cmd.command)
 
         elif device_cmd.type == 'display_reboot':
             device_url = "%s/reboot" % device.address
             payload = {}
+            log_text = "%s" % (device_cmd.type)
 
         else:
             logging.error('Unknown device cmd: "%s"' % device_cmd.type)
@@ -132,7 +139,7 @@ class Daemon:
             device_cmd.save()
             return False
 
-        logging.info('Sending command to Kio-Node: %s - %s' % (device, device_cmd.type))
+        logging.info('Sending command to Kio-Node: %s - %s' % (device, log_text))
         now = arrow.utcnow()
         node_response = requests.get(device_url, payload)
 

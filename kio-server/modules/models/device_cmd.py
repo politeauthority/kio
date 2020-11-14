@@ -22,14 +22,14 @@ class DeviceCmd(Base):
             },
             {
                 'name': 'command',
-                'type': 'str'
+                'type': 'text'
             },
             {
                 'name': 'status',
                 'type': 'str'
             },
             {
-                'name': 'received_ts',
+                'name': 'api_received_ts',
                 'type': 'datetime'
             },
             {
