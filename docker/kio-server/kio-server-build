@@ -1,0 +1,24 @@
+#!/bin/sh -l
+# Kio Server Build
+
+set -e
+echo "Running Kio Server Build"
+
+echo "Removing Kio Server"
+rm -rf /usr/local/lib/python3.9/site-packages/kio-server-0.0.*
+rm -rf /app/build
+rm -rf /app/dist
+rm -rf /app/kio_server.egg-info
+
+echo "Building Kio Server"
+cd /app
+python3 setup.py build
+python3 setup.py install
+
+
+cd /app
+flake8
+
+# echo "Running tests"
+# cd /tests/unit
+# pytest --cov=pignus_api --cov=pignus_client
