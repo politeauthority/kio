@@ -24,7 +24,6 @@ def index() -> str:
         "active_page": "urls"
 
     }
-    print(data)
     return render_template('urls/dashboard.html', **data)
 
 @urls.route('info/<url_id>')

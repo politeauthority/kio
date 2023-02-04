@@ -42,8 +42,7 @@ def debug(scan_type: str=''):
 @about.route('/command-log')
 def command_log(scan_type: str=''):
     """Command Log"""
-    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
-    collect = DeviceCmdsCollect(conn, cursor)
+    collect = DeviceCmdsCollect()
     one_hour_ago = (arrow.utcnow() - timedelta(hours=1)).datetime
 
     cmds = collect.get_since(one_hour_ago)

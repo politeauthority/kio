@@ -286,7 +286,7 @@ class Base:
 
     def get_since(self, seconds_since_created: int) -> list:
         """Get model instances created in last x seconds. """
-        then = arrow.utcnow().datetime - timedelta(seconds=seconds_since_created)
+        then = arrow.utcnow().datetime - seconds_since_created
         sql = """
             SELECT *
             FROM `%s`

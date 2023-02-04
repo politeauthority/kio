@@ -2,8 +2,8 @@
 Gets collections of device cmds.
 
 """
-from .base import Base
-from ..models.device_cmd import DeviceCmd
+from kio_server.collections.base import Base
+from kio_server.models.device_cmd import DeviceCmd
 
 
 class DeviceCmds(Base):

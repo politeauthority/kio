@@ -2,8 +2,8 @@
 Gets collections of play lists.
 
 """
-from .base import Base
-from ..models.playlist import Playlist
+from kio_server.collections.base import Base
+from kio_server.models.playlist import Playlist
 
 
 class Playlists(Base):
@@ -14,4 +14,4 @@ class Playlists(Base):
         self.collect_model = Playlist
 
 
-# End File: kio/kio-server/modules/collections/playlist.py
+# End File: kio/src/kio-server/collections/playlist.py

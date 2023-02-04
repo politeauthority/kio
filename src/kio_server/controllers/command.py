@@ -18,8 +18,7 @@ command = Blueprint('Command', __name__, url_prefix='/command')
 @command.route('/')
 def index() -> str:
     """Device roster page."""
-    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
-    cdevices = DevicesCollect(conn, cursor)
+    cdevices = DevicesCollect()
     all_devices = cdevices.get_all()
     data = {
         "devices": all_devices,
@@ -33,8 +32,7 @@ def index() -> str:
 @command.route('/run', methods=["POST"])
 def run() -> str:
     """Set devices immediately to the requested url. """
-    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
-    cdevices = DevicesCollect(conn, cursor)
+    cdevices = DevicesCollect()
     
     # Determine the devices to command
     cmd_devices = request.form['cmd_now_device']
@@ -61,8 +59,7 @@ def run() -> str:
 @command.route('/device-reboot', methods=["POST"])
 def device_reboot() -> str:
     device_id = request.form['device_id']
-    conn, cursor = db.connect(app.config['KIO_SERVER_DB'])
-    device = DeviceModel(conn, cursor)
+    device = DeviceModel()
     device.get_by_id(device_id)
 
     payload = {
@@ -83,4 +80,4 @@ def device_reboot() -> str:
     return jsonify(data)
 
 
-# End File: kio/kio-server/modules/controllers/command.py
+# End File: kio/src/kio-server/controllers/command.py
