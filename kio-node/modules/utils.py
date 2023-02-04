@@ -8,7 +8,8 @@ import subprocess
 
 def set_display(url: str):
     """Set chromium to the url specified."""
-    cmd = 'sudo su pi -c "export DISPLAY=":0" && chromium-browser %s"' % url
+    user = "piki"
+    cmd = 'sudo su %s -c "export DISPLAY=":0" && chromium-browser %s"' % (user, url)
     print('Running:\t%s' % cmd)
     # os.setreuid(1000,1000)
     subprocess.check_output(cmd, shell=True)
@@ -20,6 +21,7 @@ def kill_old_tabs() -> bool:
     chrome_procs = collect_procs("renderer-client-id")
     success = kill_old_tab_procs(chrome_procs)
     return success
+
 
 def collect_procs(proc_search: str) -> list:
     """Generic collector of system processes using ps aux and grep containing a search to filter the

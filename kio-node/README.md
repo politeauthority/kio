@@ -2,10 +2,24 @@
 
 ## Installing
 This installation process assumes you have the user `pi`.
-Create a directory for the application and download it.
+
+### Step 1
+
 ```console
+sudo apt update
+sudo apt full-upgrade
+sudo reboot
+```
+
+### Step 2
+```console
+sudo apt-get install \
+    vim \
+    git \
+    xdotool unclutter
 mkdir -p ~/apps
 git clone git@github.com:politeauthority/kio.git ~/apps/kio
+pip3 install -r requirements.txt
 ```
 
 Add the following to `/etc/rc.local` to make Kio-Node run at boot. This will run the Kio-Node api on

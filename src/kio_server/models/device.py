@@ -22,6 +22,10 @@ class Device(BaseEntityMeta):
                 'type': 'str'
             },
             {
+                'name': 'user',
+                'type': 'str'
+            },
+            {
                 'name': 'address',
                 'type': 'str'
             },
