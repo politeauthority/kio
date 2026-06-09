@@ -12,6 +12,7 @@ KNOWN_FLAGS: dict[str, bool] = {
     "browser_management": True,
     "playlists": True,
     "debug": True,
+    "import_certs": False,
 }
 
 
