@@ -78,7 +78,19 @@ async def heartbeat(
             )
         )
     if payload.features is not None:
-        kiosk.features = payload.features
+        # Apply user overrides (from the edit page) on top of newly detected features
+        meta_result = await session.execute(
+            select(NodeMeta).where(NodeMeta.kiosk_id == kiosk.id, NodeMeta.key == "features_overrides")
+        )
+        meta_row = meta_result.scalar_one_or_none()
+        overrides: dict = meta_row.value if meta_row else {}
+        merged = set(payload.features)
+        for cap, enabled in overrides.items():
+            if enabled:
+                merged.add(cap)
+            else:
+                merged.discard(cap)
+        kiosk.features = sorted(merged)
     if payload.device_type is not None:
         kiosk.device_type = payload.device_type
     if payload.ip_address is not None:
@@ -140,7 +152,11 @@ async def get_agent_settings(
 
     globals_ = await settings_service.get_global_settings(session)
     overrides = kiosk.meta.get(settings_service.OVERRIDES_META_KEY)
-    return settings_service.effective_settings(globals_, overrides)
+    result = settings_service.effective_settings(globals_, overrides)
+    display_resolution = kiosk.meta.get("display_resolution")
+    if display_resolution:
+        result["display_resolution"] = display_resolution
+    return result
 
 
 @router.get("/meta")

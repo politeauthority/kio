@@ -28,4 +28,20 @@ if [ -f "$FLAGS_FILE" ]; then
   done < "$FLAGS_FILE"
 fi
 
+# Chromium 100+ requires WebContentsForceDark to actually invert web content;
+# --force-dark-mode alone only affects the browser UI chrome.
+if printf '%s\n' "${OPTIONAL_FLAGS[@]}" | grep -qx -- '--force-dark-mode'; then
+  if ! printf '%s\n' "${OPTIONAL_FLAGS[@]}" | grep -q 'WebContentsForceDark'; then
+    OPTIONAL_FLAGS+=('--enable-features=WebContentsForceDark')
+  fi
+fi
+
+# Deduplicate: drop optional flags already covered by core flags
+CORE_STR="${CORE_FLAGS[*]}"
+DEDUPED=()
+for flag in "${OPTIONAL_FLAGS[@]}"; do
+  [[ " $CORE_STR " == *" $flag "* ]] || DEDUPED+=("$flag")
+done
+OPTIONAL_FLAGS=("${DEDUPED[@]}")
+
 chromium "${CORE_FLAGS[@]}" "${OPTIONAL_FLAGS[@]}" "${START_URL}" > /dev/null 2>&1 &

@@ -4,6 +4,9 @@ docs/research
 scratch.md
 /configs/agents
 
+# Frontend
+src/ui/.vite/
+
 # Editor tooling
 .vscode
 .claude

@@ -1,0 +1,32 @@
+#!/bin/bash
+# set-resolution OUTPUT MODE [RATE]
+# Called via sudo from kio-agent to change display resolution.
+# Finds the running Wayland session and passes the right env to wlr-randr.
+set -euo pipefail
+
+OUTPUT="${1:?Usage: set-resolution OUTPUT MODE [RATE]}"
+MODE="${2:?Usage: set-resolution OUTPUT MODE [RATE]}"
+RATE="${3:-}"
+
+# Locate the Wayland compositor socket from any logged-in user session
+XDG_RUNTIME_DIR=""
+for dir in /run/user/[0-9]*; do
+    if [[ -S "$dir/wayland-0" ]]; then
+        XDG_RUNTIME_DIR="$dir"
+        break
+    fi
+done
+
+if [[ -z "$XDG_RUNTIME_DIR" ]]; then
+    echo "set-resolution: no Wayland compositor socket found" >&2
+    exit 1
+fi
+
+export XDG_RUNTIME_DIR WAYLAND_DISPLAY=wayland-0
+
+# wlr-randr 0.4.x uses WIDTHxHEIGHT@RATE combined format — no separate --rate flag
+if [[ -n "$RATE" ]]; then
+    exec wlr-randr --output "$OUTPUT" --mode "${MODE}@${RATE}"
+else
+    exec wlr-randr --output "$OUTPUT" --mode "$MODE"
+fi

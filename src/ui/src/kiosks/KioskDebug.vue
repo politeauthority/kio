@@ -15,12 +15,14 @@
       <div class="card">
         <div class="card-header">Hardware</div>
         <table class="debug-table">
-          <tr><td>Device</td><td>{{ kiosk.device_type || '—' }}</td></tr>
-          <tr><td>IP Address</td><td><code>{{ kiosk.ip_address || '—' }}</code></td></tr>
-          <tr><td>Agent Version</td><td><code>v{{ kiosk.agent_version || '—' }}</code></td></tr>
-          <tr><td>Kiosk ID</td><td><code style="font-size: 0.72rem">{{ kiosk.id }}</code></td></tr>
-          <tr><td>Hostname</td><td><code>{{ kiosk.hostname }}</code></td></tr>
-          <tr><td>Registered</td><td>{{ fmt(kiosk.created_at) }}</td></tr>
+          <tbody>
+            <tr><td>Device</td><td>{{ kiosk.device_type || '—' }}</td></tr>
+            <tr><td>IP Address</td><td><code>{{ kiosk.ip_address || '—' }}</code></td></tr>
+            <tr><td>Agent Version</td><td><code>v{{ kiosk.agent_version || '—' }}</code></td></tr>
+            <tr><td>Kiosk ID</td><td><code style="font-size: 0.72rem">{{ kiosk.id }}</code></td></tr>
+            <tr><td>Hostname</td><td><code>{{ kiosk.hostname }}</code></td></tr>
+            <tr><td>Registered</td><td>{{ fmt(kiosk.created_at) }}</td></tr>
+          </tbody>
         </table>
       </div>
 
@@ -28,33 +30,35 @@
       <div class="card">
         <div class="card-header">Live Status</div>
         <table class="debug-table">
-          <tr>
-            <td>Connection</td>
-            <td><span class="status-badge" :class="`status-${kiosk.status}`">{{ kiosk.status }}</span></td>
-          </tr>
-          <tr><td>Last Seen</td><td>{{ fmt(kiosk.last_seen) }}</td></tr>
-          <tr>
-            <td>Display</td>
-            <td>
-              <span v-if="kiosk.display_on === true" style="color: var(--success)">On</span>
-              <span v-else-if="kiosk.display_on === false" style="color: var(--danger)">Off</span>
-              <span v-else class="text-muted">Unknown</span>
-            </td>
-          </tr>
-          <tr>
-            <td>Input</td>
-            <td><code v-if="kiosk.current_input">{{ kiosk.current_input }}</code><span v-else class="text-muted">—</span></td>
-          </tr>
-          <tr>
-            <td>Current URL</td>
-            <td>
-              <a v-if="kiosk.current_url" :href="kiosk.current_url" target="_blank" rel="noopener"
-                 style="font-size: 0.78rem; word-break: break-all">
-                {{ kiosk.current_url }}
-              </a>
-              <span v-else class="text-muted">—</span>
-            </td>
-          </tr>
+          <tbody>
+            <tr>
+              <td>Connection</td>
+              <td><span class="status-badge" :class="`status-${kiosk.status}`">{{ kiosk.status }}</span></td>
+            </tr>
+            <tr><td>Last Seen</td><td>{{ fmt(kiosk.last_seen) }}</td></tr>
+            <tr>
+              <td>Display</td>
+              <td>
+                <span v-if="kiosk.display_on === true" style="color: var(--success)">On</span>
+                <span v-else-if="kiosk.display_on === false" style="color: var(--danger)">Off</span>
+                <span v-else class="text-muted">Unknown</span>
+              </td>
+            </tr>
+            <tr>
+              <td>Input</td>
+              <td><code v-if="kiosk.current_input">{{ kiosk.current_input }}</code><span v-else class="text-muted">—</span></td>
+            </tr>
+            <tr>
+              <td>Current URL</td>
+              <td>
+                <a v-if="kiosk.current_url" :href="kiosk.current_url" target="_blank" rel="noopener"
+                   style="font-size: 0.78rem; word-break: break-all">
+                  {{ kiosk.current_url }}
+                </a>
+                <span v-else class="text-muted">—</span>
+              </td>
+            </tr>
+          </tbody>
         </table>
       </div>
 
@@ -137,9 +141,11 @@
         <details v-if="detectLog.hardware_info?.cec" style="margin-top: 0.75rem">
           <summary class="text-xs text-muted" style="cursor: pointer; user-select: none">CEC bus details</summary>
           <table class="debug-table" style="margin-top: 0.5rem; max-width: 360px">
-            <tr v-for="(v, k) in detectLog.hardware_info.cec" :key="k">
-              <td>{{ k }}</td><td><code>{{ v }}</code></td>
-            </tr>
+            <tbody>
+              <tr v-for="(v, k) in detectLog.hardware_info.cec" :key="k">
+                <td>{{ k }}</td><td><code>{{ v }}</code></td>
+              </tr>
+            </tbody>
           </table>
         </details>
       </template>
@@ -154,12 +160,14 @@
         <div>
           <div class="text-xs text-muted" style="margin-bottom: 0.5rem; letter-spacing: 0.04em">SYSTEM</div>
           <table class="debug-table">
-            <tr v-if="hw.os"><td>OS</td><td>{{ hw.os }}</td></tr>
-            <tr v-if="hw.kernel"><td>Kernel</td><td><code>{{ hw.kernel }}</code></td></tr>
-            <tr v-if="hw.board_model"><td>Board</td><td>{{ hw.board_model }}</td></tr>
-            <tr v-if="hw.cpu_hardware"><td>CPU</td><td>{{ hw.cpu_hardware }}</td></tr>
-            <tr v-if="hw.cpu_cores"><td>Cores</td><td>{{ hw.cpu_cores }}</td></tr>
-            <tr v-if="hw.board_revision"><td>Revision</td><td><code>{{ hw.board_revision }}</code></td></tr>
+            <tbody>
+              <tr v-if="hw.os"><td>OS</td><td>{{ hw.os }}</td></tr>
+              <tr v-if="hw.kernel"><td>Kernel</td><td><code>{{ hw.kernel }}</code></td></tr>
+              <tr v-if="hw.board_model"><td>Board</td><td>{{ hw.board_model }}</td></tr>
+              <tr v-if="hw.cpu_hardware"><td>CPU</td><td>{{ hw.cpu_hardware }}</td></tr>
+              <tr v-if="hw.cpu_cores"><td>Cores</td><td>{{ hw.cpu_cores }}</td></tr>
+              <tr v-if="hw.board_revision"><td>Revision</td><td><code>{{ hw.board_revision }}</code></td></tr>
+            </tbody>
           </table>
         </div>
 
@@ -167,12 +175,14 @@
         <div>
           <div class="text-xs text-muted" style="margin-bottom: 0.5rem; letter-spacing: 0.04em">MEMORY & STORAGE</div>
           <table class="debug-table">
-            <tr v-if="hw.ram_mb"><td>RAM</td><td>{{ hw.ram_mb }} MB</td></tr>
-            <tr v-if="hw.gpu_mem_mb"><td>GPU Mem</td><td>{{ hw.gpu_mem_mb }} MB</td></tr>
-            <tr v-if="hw.cpu_temp"><td>Temp</td><td>{{ hw.cpu_temp }}</td></tr>
-            <tr v-if="hw.storage"><td>Disk Total</td><td>{{ hw.storage.total }}</td></tr>
-            <tr v-if="hw.storage"><td>Disk Used</td><td>{{ hw.storage.used }} ({{ hw.storage.use_pct }})</td></tr>
-            <tr v-if="hw.storage"><td>Disk Free</td><td>{{ hw.storage.free }}</td></tr>
+            <tbody>
+              <tr v-if="hw.ram_mb"><td>RAM</td><td>{{ hw.ram_mb }} MB</td></tr>
+              <tr v-if="hw.gpu_mem_mb"><td>GPU Mem</td><td>{{ hw.gpu_mem_mb }} MB</td></tr>
+              <tr v-if="hw.cpu_temp"><td>Temp</td><td>{{ hw.cpu_temp }}</td></tr>
+              <tr v-if="hw.storage"><td>Disk Total</td><td>{{ hw.storage.total }}</td></tr>
+              <tr v-if="hw.storage"><td>Disk Used</td><td>{{ hw.storage.used }} ({{ hw.storage.use_pct }})</td></tr>
+              <tr v-if="hw.storage"><td>Disk Free</td><td>{{ hw.storage.free }}</td></tr>
+            </tbody>
           </table>
         </div>
 
@@ -181,10 +191,12 @@
           <div class="text-xs text-muted" style="margin-bottom: 0.5rem; letter-spacing: 0.04em">DISPLAY</div>
           <div v-if="hw.display">
             <table class="debug-table">
-              <tr v-if="hw.display.manufacturer"><td>Make</td><td>{{ hw.display.manufacturer }}</td></tr>
-              <tr v-if="hw.display.model"><td>Model</td><td>{{ hw.display.model }}</td></tr>
-              <tr v-if="hw.display.serial"><td>Serial</td><td><code>{{ hw.display.serial }}</code></td></tr>
-              <tr v-if="hw.display.product_code"><td>Product</td><td><code>{{ hw.display.product_code }}</code></td></tr>
+              <tbody>
+                <tr v-if="hw.display.manufacturer"><td>Make</td><td>{{ hw.display.manufacturer }}</td></tr>
+                <tr v-if="hw.display.model"><td>Model</td><td>{{ hw.display.model }}</td></tr>
+                <tr v-if="hw.display.serial"><td>Serial</td><td><code>{{ hw.display.serial }}</code></td></tr>
+                <tr v-if="hw.display.product_code"><td>Product</td><td><code>{{ hw.display.product_code }}</code></td></tr>
+              </tbody>
             </table>
           </div>
           <span v-else class="text-muted text-sm">No display detected via DDC/CI</span>

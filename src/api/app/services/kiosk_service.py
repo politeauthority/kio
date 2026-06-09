@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.command_log import CommandLog
+from app.models.hardware_detect_log import HardwareDetectLog
 from app.models.kiosk import Kiosk
+from app.models.node_meta import NodeMeta
 from app.schemas.kiosk import KioskCreate, KioskUpdate
 
 
@@ -38,9 +40,40 @@ async def update_kiosk(session: AsyncSession, kiosk_id: uuid.UUID, data: KioskUp
         kiosk.hostname = data.hostname
     if data.features is not None:
         kiosk.features = data.features
+        await _store_features_overrides(session, kiosk_id, data.features)
     await session.commit()
     await session.refresh(kiosk)
     return kiosk
+
+
+async def _store_features_overrides(
+    session: AsyncSession, kiosk_id: uuid.UUID, user_features: list[str]
+) -> None:
+    """Persist user capability overrides vs the last detect log so they survive future detections."""
+    log_result = await session.execute(
+        select(HardwareDetectLog)
+        .where(HardwareDetectLog.kiosk_id == kiosk_id)
+        .order_by(HardwareDetectLog.detected_at.desc())
+        .limit(1)
+    )
+    log = log_result.scalar_one_or_none()
+    if log is None:
+        return  # no detect log yet — nothing to diff against
+
+    detected = set(log.capabilities or [])
+    user = set(user_features or [])
+    overrides: dict = {}
+    overrides.update({cap: True for cap in user - detected})
+    overrides.update({cap: False for cap in detected - user})
+
+    meta_result = await session.execute(
+        select(NodeMeta).where(NodeMeta.kiosk_id == kiosk_id, NodeMeta.key == "features_overrides")
+    )
+    row = meta_result.scalar_one_or_none()
+    if row:
+        row.value = overrides
+    else:
+        session.add(NodeMeta(id=uuid.uuid4(), kiosk_id=kiosk_id, key="features_overrides", value=overrides))
 
 
 async def delete(session: AsyncSession, kiosk_id: uuid.UUID) -> bool:
