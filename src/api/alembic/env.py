@@ -21,6 +21,7 @@ from app.models import feature_flag  # noqa: F401
 from app.models import app_setting  # noqa: F401
 from app.models import saved_url  # noqa: F401
 from app.models import api_key  # noqa: F401
+from app.models import certificate  # noqa: F401
 
 target_metadata = Base.metadata
 

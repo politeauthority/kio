@@ -45,7 +45,11 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useFeatureFlagsStore } from '../stores/featureFlags'
+
+const flagStore = useFeatureFlagsStore()
 
 const systemItems = [
   {
@@ -65,23 +69,33 @@ const systemItems = [
   },
 ]
 
-const nodeItems = [
-  {
-    to: '/settings/timing',
-    title: 'Timing',
-    description: 'Default heartbeat and checkin intervals applied to all nodes.',
-  },
-  {
-    to: '/settings/hosts',
-    title: 'Hosts',
-    description: 'Global /etc/hosts entries injected into every node at startup.',
-  },
-  {
-    to: '/settings/browser-flags',
-    title: 'Browser Flags',
-    description: 'Default Chromium flags applied to all nodes.',
-  },
-]
+const nodeItems = computed(() => {
+  const items = [
+    {
+      to: '/settings/timing',
+      title: 'Timing',
+      description: 'Default heartbeat and checkin intervals applied to all nodes.',
+    },
+    {
+      to: '/settings/hosts',
+      title: 'Hosts',
+      description: 'Global /etc/hosts entries injected into every node at startup.',
+    },
+    {
+      to: '/settings/browser-flags',
+      title: 'Browser Flags',
+      description: 'Default Chromium flags applied to all nodes.',
+    },
+  ]
+  if (flagStore.isEnabled('import_certs')) {
+    items.push({
+      to: '/settings/certificates',
+      title: 'Certificates',
+      description: 'CA certificates synced to every node so Chromium trusts internal HTTPS services.',
+    })
+  }
+  return items
+})
 </script>
 
 <style scoped>

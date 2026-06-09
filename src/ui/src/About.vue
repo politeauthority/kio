@@ -27,6 +27,22 @@
             <span v-else class="text-secondary">checking…</span>
           </td>
         </tr>
+        <tr>
+          <td class="text-secondary">Migration</td>
+          <td>
+            <span v-if="migrations === null" class="text-secondary">checking…</span>
+            <template v-else-if="migrations.error">
+              <span class="text-danger font-monospace small">error</span>
+              <span class="text-secondary small ms-2">{{ migrations.error }}</span>
+            </template>
+            <template v-else>
+              <span class="font-monospace small">{{ migrations.current_revision ?? '—' }}</span>
+              <span v-if="!migrations.up_to_date" class="text-warning small ms-2">
+                (pending — head: {{ migrations.head_revision }})
+              </span>
+            </template>
+          </td>
+        </tr>
       </tbody>
     </table>
   </div>
@@ -40,6 +56,7 @@ import { useApi } from './composables/useApi'
 const { apiFetch } = useApi()
 const version = ref(null)
 const healthy = ref(null)
+const migrations = ref(null)
 const apiUrl = ref(API_URL)
 
 onMounted(async () => {
@@ -54,6 +71,11 @@ onMounted(async () => {
     healthy.value = data.status === 'ok'
   } catch {
     healthy.value = false
+  }
+  try {
+    migrations.value = await apiFetch('/_migrations')
+  } catch {
+    migrations.value = { error: 'unreachable', current_revision: null, head_revision: null, up_to_date: false }
   }
 })
 </script>

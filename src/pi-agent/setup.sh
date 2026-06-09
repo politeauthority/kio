@@ -395,7 +395,7 @@ if [[ ! -x "$UV_BIN" ]]; then
   run_as_user bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 fi
 
-echo "$TARGET_USER ALL=(ALL) NOPASSWD: /sbin/reboot, /usr/sbin/reboot, /usr/bin/cec-ctl, /opt/kio-agent/update-hosts, /opt/kio-agent/force-hdmi, /opt/kio-agent/set-resolution, /usr/bin/systemctl restart kio-agent, /bin/systemctl restart kio-agent" \
+echo "$TARGET_USER ALL=(ALL) NOPASSWD: /sbin/reboot, /usr/sbin/reboot, /usr/bin/cec-ctl, /opt/kio-agent/update-hosts, /opt/kio-agent/update-certs, /opt/kio-agent/force-hdmi, /opt/kio-agent/set-resolution, /usr/bin/systemctl restart kio-agent, /bin/systemctl restart kio-agent" \
   | sudo tee /etc/sudoers.d/kio-agent > /dev/null
 sudo chmod 440 /etc/sudoers.d/kio-agent
 
@@ -407,6 +407,8 @@ echo "[1/6] System packages installed (ddcutil, v4l-utils, unclutter-xfixes, i2c
 
 sudo mkdir -p /etc/kio
 fix_owner /etc/kio
+sudo mkdir -p /etc/kio/certs
+fix_owner /etc/kio/certs
 
 if [[ -n "$CONFIG_FILE_ARG" ]]; then
   cp "$CONFIG_FILE_ARG" /etc/kio/kiosk.yaml
@@ -476,8 +478,8 @@ sudo mkdir -p "$INSTALL_DIR"
 # Repair drifted ownership (e.g. a prior run as root left root-owned files/venv),
 # then do all file ops AS THE KIOSK USER so nothing ends up owned by root.
 fix_owner "$INSTALL_DIR"
-run_as_user cp "$SCRIPT_DIR/agent.py" "$SCRIPT_DIR/requirements.txt" "$SCRIPT_DIR/scripts/update-hosts" "$SCRIPT_DIR/scripts/browser-start" "$SCRIPT_DIR/scripts/force-hdmi" "$SCRIPT_DIR/scripts/set-resolution" "$INSTALL_DIR/"
-run_as_user chmod +x "$INSTALL_DIR/update-hosts" "$INSTALL_DIR/browser-start" "$INSTALL_DIR/force-hdmi" "$INSTALL_DIR/set-resolution"
+run_as_user cp "$SCRIPT_DIR/agent.py" "$SCRIPT_DIR/requirements.txt" "$SCRIPT_DIR/scripts/update-hosts" "$SCRIPT_DIR/scripts/update-certs" "$SCRIPT_DIR/scripts/browser-start" "$SCRIPT_DIR/scripts/force-hdmi" "$SCRIPT_DIR/scripts/set-resolution" "$INSTALL_DIR/"
+run_as_user chmod +x "$INSTALL_DIR/update-hosts" "$INSTALL_DIR/update-certs" "$INSTALL_DIR/browser-start" "$INSTALL_DIR/force-hdmi" "$INSTALL_DIR/set-resolution"
 [[ -f "$SCRIPT_DIR/VERSION" ]] && run_as_user cp "$SCRIPT_DIR/VERSION" "$INSTALL_DIR/"
 run_as_user rm -rf "$INSTALL_DIR/venv"
 run_as_user "$UV_BIN" venv --seed "$INSTALL_DIR/venv"
