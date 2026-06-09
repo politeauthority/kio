@@ -839,9 +839,11 @@ def collect_hardware_info() -> dict:
             pass
 
     # Display modes (wlr-randr)
-    display_modes = _detect_display_modes()
+    display_modes, primary_output = _detect_display_modes()
     if display_modes:
         info["display_modes"] = display_modes
+    if primary_output:
+        info["primary_output"] = primary_output
 
     logger.info("Hardware info collected: %s", list(info.keys()))
     return info
@@ -939,6 +941,135 @@ def _wayland_env() -> dict | None:
     return {**os.environ, "XDG_RUNTIME_DIR": f"/run/user/{uid}", "WAYLAND_DISPLAY": "wayland-0"}
 
 
+def _wlr_outputs() -> list[tuple[str, str | None]]:
+    """Return [(connector, 'make model serial' | None), ...] for every output
+    wlr-randr reports. A None description marks a phantom/no-EDID port (the Pi's
+    forced-hotplug second HDMI shows up as '(null)'). Empty list if Wayland is
+    not up. Order matches wlr-randr output."""
+    env = _wayland_env()
+    if env is None:
+        return []
+    try:
+        r = subprocess.run(["wlr-randr"], capture_output=True, text=True, timeout=10, env=env)
+    except Exception:
+        return []
+    if r.returncode != 0:
+        return []
+    outputs: list[tuple[str, str | None]] = []
+    current: str | None = None
+    fields: dict = {}
+
+    def _flush():
+        if current is None:
+            return
+        parts = [fields.get(k) for k in ("make", "model", "serial")]
+        # A phantom/no-EDID port reports its make/model/serial as literally "(null)";
+        # treat those (and "Unknown") as absent so it is description-less.
+        parts = [p for p in parts if p and p not in ("Unknown", "(null)")]
+        outputs.append((current, " ".join(parts) if parts else None))
+
+    for line in r.stdout.splitlines():
+        if line and not line[0].isspace():
+            _flush()
+            current = line.split()[0]
+            fields = {}
+        elif current:
+            s = line.strip()
+            for key, label in (("make", "Make:"), ("model", "Model:"), ("serial", "Serial:")):
+                if s.startswith(label):
+                    fields[key] = s.split(":", 1)[1].strip()
+    _flush()
+    return outputs
+
+
+def _current_connector(stored: str) -> str:
+    """Resolve a (possibly stale) stored connector name to the real display present
+    now. Prefers a real (EDID-bearing) display over raw connector presence, because
+    the Pi's phantom port can occupy the stored name (e.g. HDMI-A-2) while the actual
+    monitor is on another connector."""
+    outs = _wlr_outputs()
+    real = [c for c, desc in outs if desc]
+    if stored in real:
+        return stored
+    if len(real) == 1:
+        return real[0]
+    names = [c for c, _ in outs]
+    return stored if stored in names else (real[0] if real else stored)
+
+
+def _write_kanshi_config(output: str, mode: str, rate: float | None) -> bool:
+    """Write kanshi profiles so the compositor re-applies the resolution on session
+    start and every display reconnect. Returns True if the file content changed.
+
+    Generates two profiles because kanshi only matches a profile when it accounts
+    for ALL connected outputs, and the Pi exposes a phantom second HDMI port (forced
+    hotplug, no EDID) that comes and goes:
+      - kiosk_dual: target display at the mode + every other connected output disabled
+      - kiosk_solo: target display only (matches when the phantom is absent)
+    The target is keyed on its stable make/model/serial description so it survives
+    connector renames; phantom ports are referenced by connector name.
+    """
+    config_dir = os.path.expanduser("~/.config/kanshi")
+    os.makedirs(config_dir, exist_ok=True)
+    config_path = os.path.join(config_dir, "config")
+
+    outs = _wlr_outputs()
+    descriptions = {c: d for c, d in outs if d}
+    # Resolve the target connector: prefer the stored name, else the sole real display.
+    if output in descriptions:
+        target_conn = output
+    elif len(descriptions) == 1:
+        target_conn = next(iter(descriptions))
+    else:
+        target_conn = output
+    target_id = descriptions.get(target_conn, target_conn)
+
+    rate_str = f"@{rate:g}Hz" if rate is not None else ""
+    target_line = f'    output "{target_id}" mode {mode}{rate_str} position 0,0'
+    others = [c for c, _ in outs if c != target_conn]
+
+    dual = "\n".join([target_line] + [f'    output "{c}" disable' for c in others])
+    blocks = [f'profile kiosk_dual {{\n{dual}\n}}']
+    if others:
+        blocks.append(f'profile kiosk_solo {{\n{target_line}\n}}')
+    content = "\n".join(blocks) + "\n"
+
+    try:
+        if open(config_path).read() == content:
+            return False
+    except Exception:
+        pass
+    with open(config_path, "w") as fh:
+        fh.write(content)
+    logger.info("Wrote kanshi config: target=%r mode=%s%s disabled=%s", target_id, mode, rate_str, others)
+    return True
+
+
+def _reload_kanshi() -> None:
+    """Restart kanshi so a config change takes effect immediately. kanshi reads its
+    config only at startup (no SIGHUP reload, no kanshictl on the Pi), so without a
+    restart a later display reconnect would re-apply the stale in-memory profile.
+    No-op when Wayland is not up — kanshi reads the fresh config when it next starts."""
+    env = _wayland_env()
+    if env is None:
+        return
+    try:
+        subprocess.run(["pkill", "-x", "kanshi"], capture_output=True, timeout=5)
+    except Exception:
+        pass
+    try:
+        subprocess.Popen(
+            ["kanshi"], env=env,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        logger.info("kanshi restarted to apply updated config")
+    except FileNotFoundError:
+        logger.debug("kanshi not installed — skipping reload")
+    except Exception as exc:
+        logger.warning("Failed to restart kanshi: %s", exc)
+
+
 def _restart_browser() -> None:
     """Kill Chromium (if running) and relaunch via browser-start with the Wayland env.
 
@@ -969,14 +1100,15 @@ def _wlopm_outputs() -> list[str]:
         return []
 
 
-def _detect_display_modes() -> dict:
-    """Return available display modes per output.
+def _detect_display_modes() -> tuple[dict, str | None]:
+    """Return (modes_per_output, primary_output_name).
 
-    Tries wlr-randr first (gives modes + refresh rates). Falls back to DRM
-    sysfs (/sys/class/drm/card*-*/modes) when wlr-randr is not installed or
+    Tries wlr-randr first (gives modes + refresh rates + position). Falls back to
+    DRM sysfs (/sys/class/drm/card*-*/modes) when wlr-randr is not installed or
     the Wayland session is not yet running (e.g. early boot).
 
-    Returns dict like {"HDMI-A-1": [{"mode": "1920x1080", "rate": 60.0, "current": True}, ...]}
+    modes is like {"HDMI-A-1": [{"mode": "1920x1080", "rate": 60.0, "current": True}, ...]}.
+    primary_output is the output at position 0,0, falling back to the first output.
     """
     import re
     env = _wayland_env()
@@ -985,11 +1117,13 @@ def _detect_display_modes() -> dict:
             r = subprocess.run(["wlr-randr"], capture_output=True, text=True, timeout=10, env=env)
             if r.returncode == 0 and r.stdout.strip():
                 modes: dict = {}
+                positions: dict = {}
                 current_output: str | None = None
                 for line in r.stdout.splitlines():
                     if line and not line[0].isspace():
                         current_output = line.split()[0]
                         modes[current_output] = []
+                        positions[current_output] = None
                     elif current_output and line.strip():
                         # wlr-randr format: "    1920x1080 px, 60.000000 Hz (current)"
                         m = re.match(r'\s+(\d+x\d+)\s+px,\s+([\d.]+)\s+Hz(.*)', line)
@@ -1001,9 +1135,17 @@ def _detect_display_modes() -> dict:
                                 "current": "current" in flags,
                                 "preferred": "preferred" in flags,
                             })
+                        else:
+                            pm = re.match(r'\s+Position:\s*(\d+),\s*(\d+)', line)
+                            if pm:
+                                positions[current_output] = [int(pm.group(1)), int(pm.group(2))]
                 result = {k: v for k, v in modes.items() if v}
                 if result:
-                    return result
+                    primary = next(
+                        (out for out, pos in positions.items() if pos == [0, 0] and out in result),
+                        next(iter(result)),
+                    )
+                    return result, primary
         except Exception:
             pass
 
@@ -1034,7 +1176,8 @@ def _detect_display_modes() -> dict:
                 sysfs_modes[output_name] = entry_list
         except Exception:
             pass
-    return sysfs_modes
+    primary = next(iter(sysfs_modes)) if sysfs_modes else None
+    return sysfs_modes, primary
 
 
 def _wayland_display_power(on: bool) -> bool:
@@ -1312,7 +1455,15 @@ def handle_command(payload: bytes) -> None:
             if not output or not mode:
                 _report_command("set_resolution", False, "Missing output or mode", command_id=command_id)
                 return
-            args = ["sudo", "/opt/kio-agent/set-resolution", output, mode]
+            # Write kanshi config first so the resolution persists across session
+            # restarts and display reconnects even if the live apply below fails;
+            # reload kanshi so its in-memory profile matches the new config.
+            if _write_kanshi_config(output, mode, rate):
+                _reload_kanshi()
+            # Live apply for the running session, targeting the connector that is
+            # actually present now (the dashboard-sent name can be a stale HDMI-A-N).
+            connector = _current_connector(output)
+            args = ["sudo", "/opt/kio-agent/set-resolution", connector, mode]
             if rate is not None:
                 args.append(str(rate))
             logger.info("set_resolution: running %s", " ".join(args))
@@ -1322,7 +1473,12 @@ def handle_command(payload: bytes) -> None:
                 logger.warning("set_resolution failed (exit %d): %s", r.returncode, err)
                 _report_command("set_resolution", False, err, command_id=command_id)
                 return
-            logger.info("Resolution set: %s %s @ %s", output, mode, rate)
+            logger.info("Resolution set: %s %s @ %s", connector, mode, rate)
+            _report_command(
+                "set_resolution", True,
+                f"{output} {mode}" + (f" @ {rate} Hz" if rate is not None else ""),
+                command_id=command_id,
+            )
         elif command == "set_input":
             input_name = cmd.get("input", "")
             hex_val = INPUT_MAP.get(input_name)
@@ -1773,17 +1929,27 @@ class KioAgent:
 
         res = s.get("display_resolution")
         if res and isinstance(res, dict) and res.get("output") and res.get("mode"):
-            args = ["sudo", "/opt/kio-agent/set-resolution", res["output"], res["mode"]]
+            # Keep the kanshi config in sync with NodeMeta so the compositor
+            # re-applies the correct resolution on every session start and display
+            # reconnect — this is the durable persistence path. Reload kanshi only
+            # when the config actually changed, to avoid churn on every checkin.
+            if _write_kanshi_config(res["output"], res["mode"], res.get("rate")):
+                _reload_kanshi()
+            # Best-effort live apply for the running session; fails silently if
+            # Wayland is not up yet (kanshi applies it on compositor start). Target
+            # the connector present now, since the stored name can be stale.
+            connector = _current_connector(res["output"])
+            args = ["sudo", "/opt/kio-agent/set-resolution", connector, res["mode"]]
             if res.get("rate") is not None:
                 args.append(str(res["rate"]))
             try:
                 r = subprocess.run(args, capture_output=True, text=True, timeout=15)
                 if r.returncode == 0:
-                    logger.info("Applied stored display resolution: %s %s @ %s", res["output"], res["mode"], res.get("rate"))
+                    logger.info("Applied stored display resolution: %s %s @ %s", connector, res["mode"], res.get("rate"))
                 else:
-                    logger.warning("Failed to apply stored display resolution: %s", r.stderr.strip())
+                    logger.warning("Live apply failed (kanshi will apply on session start): %s", r.stderr.strip())
             except Exception as exc:
-                logger.warning("Failed to apply stored display resolution: %s", exc)
+                logger.warning("Live apply exception: %s", exc)
         if report:
             _report_command(
                 "apply_settings", True,

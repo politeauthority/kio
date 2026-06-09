@@ -431,7 +431,12 @@ const selectedResolutions = ref({})
 const settingResolution = ref(false)
 
 function displayModesFromLog(log) {
-  return log?.hardware_info?.display_modes ?? {}
+  const modes = log?.hardware_info?.display_modes ?? {}
+  // Limit resolution control to the kiosk's active display (the output at
+  // position 0,0). Falls back to all outputs for older detect logs.
+  const primary = log?.hardware_info?.primary_output
+  if (primary && primary in modes) return { [primary]: modes[primary] }
+  return modes
 }
 
 // Map wlr-randr output names to the input keys used by inputLabels

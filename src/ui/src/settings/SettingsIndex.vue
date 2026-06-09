@@ -48,26 +48,33 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useFeatureFlagsStore } from '../stores/featureFlags'
+import { SHOW_FEATURE_FLAGS } from '../config'
 
 const flagStore = useFeatureFlagsStore()
 
-const systemItems = [
-  {
-    to: '/settings/feature-flags',
-    title: 'Feature Flags',
-    description: 'Enable or disable UI features across the dashboard.',
-  },
-  {
-    to: '/settings/agents',
-    title: 'Agents',
-    description: 'System-wide agent health and retention settings.',
-  },
-  {
-    to: '/settings/api-keys',
-    title: 'API Keys',
-    description: 'Manage programmatic access keys for integrations.',
-  },
-]
+const systemItems = computed(() => {
+  const items = []
+  if (SHOW_FEATURE_FLAGS) {
+    items.push({
+      to: '/settings/feature-flags',
+      title: 'Feature Flags',
+      description: 'Enable or disable UI features across the dashboard.',
+    })
+  }
+  items.push(
+    {
+      to: '/settings/agents',
+      title: 'Agents',
+      description: 'System-wide agent health and retention settings.',
+    },
+    {
+      to: '/settings/api-keys',
+      title: 'API Keys',
+      description: 'Manage programmatic access keys for integrations.',
+    },
+  )
+  return items
+})
 
 const nodeItems = computed(() => {
   const items = [

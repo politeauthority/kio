@@ -386,7 +386,7 @@ echo ""
 # [1/5] System packages
 # ---------------------------------------------------------------------------
 
-sudo apt-get install -y -q ddcutil v4l-utils git unclutter-xfixes wlr-randr
+sudo apt-get install -y -q ddcutil v4l-utils git unclutter-xfixes wlr-randr kanshi
 sudo usermod -aG i2c "$TARGET_USER"
 
 # uv must belong to the kiosk user (the deploy/venv use $TARGET_HOME/.local/bin/uv).
@@ -508,7 +508,12 @@ echo "[4/6] Systemd service installed, enabled, and started"
 # ---------------------------------------------------------------------------
 
 run_as_user mkdir -p "$TARGET_HOME/.config/labwc"
-run_as_user bash -c "printf 'pkill wf-panel-pi\nunclutter-xfixes --timeout 1 &\n%s/browser-start\n' '$INSTALL_DIR' > '$TARGET_HOME/.config/labwc/autostart'"
+run_as_user mkdir -p "$TARGET_HOME/.config/kanshi"
+# kanshi applies the agent-written display profile (~/.config/kanshi/config) on
+# session start and every display reconnect — the durable resolution persistence path.
+# `pkill -x kanshi` first so we end up with exactly one instance even when the base
+# image's /etc/xdg/labwc/autostart already started one (this user autostart runs after it).
+run_as_user bash -c "printf 'pkill wf-panel-pi\npkill -x kanshi\nkanshi &\nunclutter-xfixes --timeout 1 &\n%s/browser-start\n' '$INSTALL_DIR' > '$TARGET_HOME/.config/labwc/autostart'"
 run_as_user chmod +x "$TARGET_HOME/.config/labwc/autostart"
 echo "[5/6] labwc autostart configured"
 

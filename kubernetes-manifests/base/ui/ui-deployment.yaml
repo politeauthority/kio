@@ -24,6 +24,8 @@ spec:
           env:
             - name: API_URL
               value: /api
+            - name: SHOW_FEATURE_FLAGS
+              value: "True"
           resources:
             requests:
               cpu: "50m"
