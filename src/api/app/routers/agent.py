@@ -138,6 +138,16 @@ async def get_browser_flags(
     return kiosk.browser_flags
 
 
+@router.get("/certs")
+async def get_certs(
+    kiosk: Kiosk = Depends(get_node_kiosk),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from app.models.certificate import Certificate
+    rows = await session.execute(select(Certificate).order_by(Certificate.name))
+    return [{"id": str(r.id), "name": r.name, "content": r.content} for r in rows.scalars().all()]
+
+
 @router.get("/settings")
 async def get_agent_settings(
     kiosk: Kiosk = Depends(get_node_kiosk),

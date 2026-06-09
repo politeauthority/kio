@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth import refresh_jwks, require_dashboard_auth
 from app.config import settings
 from app.mqtt import start_mqtt, stop_mqtt
-from app.routers import agent, agent_settings, auth, event_logs, feature_flags, kiosks, managed_api_keys, node_settings, playlists, saved_urls, sse, tokens
+from app.routers import agent, agent_settings, auth, certificates, event_logs, feature_flags, kiosks, managed_api_keys, node_settings, playlists, saved_urls, sse, tokens
 from app.services.kiosk_service import mark_offline_kiosks, update_kiosk_from_heartbeat
 
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -92,6 +92,46 @@ app.include_router(event_logs.router, dependencies=_dashboard_auth)
 app.include_router(saved_urls.router, dependencies=_dashboard_auth)
 app.include_router(managed_api_keys.router, dependencies=_dashboard_auth)
 app.include_router(node_settings.router, dependencies=_dashboard_auth)
+app.include_router(certificates.router, dependencies=_dashboard_auth)
+
+
+@app.get("/_migrations")
+async def migrations() -> dict:
+    from pathlib import Path
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import text
+
+    from app.database import async_session_factory
+
+    head_revision = None
+    current_revision = None
+    error = None
+
+    try:
+        alembic_ini = Path(__file__).parent.parent / "alembic.ini"
+        cfg = Config(str(alembic_ini))
+        script = ScriptDirectory.from_config(cfg)
+        head_revision = script.get_current_head()
+    except Exception as exc:
+        error = f"Could not read head revision: {exc}"
+        logger.error("Migrations head error: %s", exc)
+
+    try:
+        async with async_session_factory() as session:
+            row = (await session.execute(text("SELECT version_num FROM alembic_version"))).fetchone()
+            current_revision = row[0] if row else None
+    except Exception as exc:
+        error = f"Could not read current revision: {exc}"
+        logger.error("Migrations current error: %s", exc)
+
+    return {
+        "current_revision": current_revision,
+        "head_revision": head_revision,
+        "up_to_date": current_revision is not None and current_revision == head_revision,
+        "error": error,
+    }
 
 
 @app.get("/_version")

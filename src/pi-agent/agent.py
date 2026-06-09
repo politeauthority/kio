@@ -1266,6 +1266,11 @@ def handle_command(payload: bytes) -> None:
                 _agent._sync_browser_flags()
             else:
                 logger.warning("sync_browser_flags: agent not ready")
+        elif command == "sync_certs":
+            if _agent:
+                _agent._sync_certs()
+            else:
+                logger.warning("sync_certs: agent not ready")
         elif command == "sync_hosts":
             if _agent:
                 _agent._sync_hosts()
@@ -1453,6 +1458,42 @@ class KioAgent:
         self._player.start()
 
     # --- HTTP heartbeat ---
+
+    def _sync_certs(self) -> None:
+        import glob
+        import re
+        try:
+            resp = requests.get(
+                f"{self.api_url}/agent/certs",
+                headers={"Authorization": f"Bearer {self.api_token}"},
+                timeout=30,
+                verify=TLS_VERIFY,
+            )
+            if resp.status_code != 200:
+                logger.warning("Failed to fetch certs: HTTP %s", resp.status_code)
+                return
+            certs = resp.json()
+            cert_dir = "/etc/kio/certs"
+            os.makedirs(cert_dir, exist_ok=True)
+            for f in glob.glob(f"{cert_dir}/*.crt"):
+                os.remove(f)
+            for cert in certs:
+                safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", cert["name"])
+                with open(f"{cert_dir}/{safe_name}.crt", "w") as f:
+                    f.write(cert["content"])
+            result = subprocess.run(
+                ["sudo", "/opt/kio-agent/update-certs"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                logger.info("Certs synced: %d installed", len(certs))
+            else:
+                logger.warning("update-certs failed: %s", result.stderr.strip())
+        except PermissionError as exc:
+            logger.warning("Permission denied writing certs: %s", exc)
+            _report_file_error("/etc/kio/certs")
+        except Exception as exc:
+            logger.warning("Cert sync failed: %s", exc)
 
     def _sync_hosts(self) -> None:
         try:
@@ -1862,6 +1903,7 @@ class KioAgent:
         else:
             logger.warning("No MQTT host configured — commands disabled")
 
+        self._sync_certs()
         self._sync_hosts()
         self._sync_browser_flags()
         # Pull node settings on every restart, applying heartbeat/jitter/metadata

@@ -1,0 +1,16 @@
+#!/bin/bash
+# Called by the kio agent (via sudo) to install CA certificates into the system
+# trust store. Listed in /etc/sudoers.d/kio-agent so it can run without a password.
+
+CERT_SOURCE="/etc/kio/certs"
+CERT_DEST="/usr/local/share/ca-certificates"
+
+# Remove all previously managed certs
+rm -f "$CERT_DEST"/kio_*.crt
+
+# Copy current certs from kio cert dir
+if [ -d "$CERT_SOURCE" ] && [ "$(ls -A "$CERT_SOURCE" 2>/dev/null)" ]; then
+  cp "$CERT_SOURCE"/*.crt "$CERT_DEST"/ 2>/dev/null || true
+fi
+
+update-ca-certificates

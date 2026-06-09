@@ -62,6 +62,11 @@ const flagDefs = [
     label: 'Debug',
     description: 'Show debug page links on kiosk detail pages.',
   },
+  {
+    key: 'import_certs',
+    label: 'Import Certs',
+    description: 'Show the Certificates settings page for syncing CA certs to kiosk nodes.',
+  },
 ]
 
 async function toggle(key) {
