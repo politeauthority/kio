@@ -1,0 +1,17 @@
+#!/bin/bash
+# Called by the kio agent (via sudo) to apply extra_hosts to /etc/hosts.
+# Listed in /etc/sudoers.d/kio-agent so it can run without a password.
+
+EXTRA_HOSTS="/etc/kio/extra-hosts"
+
+# Remove any existing kio-managed block
+sed -i '/# kio-managed-start/,/# kio-managed-end/d' /etc/hosts
+
+# Append the new block if the file has content
+if [ -f "$EXTRA_HOSTS" ] && [ -s "$EXTRA_HOSTS" ]; then
+  {
+    echo "# kio-managed-start"
+    cat "$EXTRA_HOSTS"
+    echo "# kio-managed-end"
+  } >> /etc/hosts
+fi

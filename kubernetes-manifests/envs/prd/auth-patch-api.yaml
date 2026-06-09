@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kio-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: kio-api
+          env:
+            - name: AUTHENTIK_ISSUER
+              value: "https://auth.alix.lol/application/o/kio/"
+            - name: AUTH_DISABLED
+              value: "true"

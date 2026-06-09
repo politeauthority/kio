@@ -1,0 +1,470 @@
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  # Override any of these in .env (copy .env.example → .env and fill in values)
+  HARBOR:
+    sh: echo "${HARBOR:-your-registry.example.com/your-org}"
+  IMAGE: "{{.HARBOR}}/kio-api"
+  IMAGE_UI: "{{.HARBOR}}/kio-ui"
+  VERSION:
+    sh: cat VERSION
+  # Pi nodes keep a git checkout of the repo here; deploys pull main then layer
+  # the current local agent source on top before installing to /opt/kio-agent.
+  KIO_REPO:
+    sh: echo "${KIO_REPO:-git@github.com:your-org/kio.git}"
+  KIO_DIR:
+    sh: echo "${KIO_DIR:-/home/pi/kio}"
+  MQTT_HOST:
+    sh: echo "${MQTT_HOST:-192.168.1.100}"
+
+
+tasks:
+  apply-dev:
+    desc: Apply kio-dev k8s manifests
+    cmds:
+      - kubectl apply -k kubernetes-manifests/envs/dev/
+
+  apply-prd:
+    desc: Apply production k8s manifests
+    cmds:
+      - kubectl apply -k kubernetes-manifests/envs/prd/
+
+  apply-stg:
+    desc: Apply kio-stg k8s manifests (copies harbor-registry pull secret from kio-dev if absent)
+    cmds:
+      - kubectl get secret harbor-registry -n kio-stg --ignore-not-found | grep -q harbor-registry || kubectl get secret harbor-registry -n kio-dev -o json | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.metadata.namespace)' | kubectl apply -n kio-stg -f -
+      - kubectl apply -k kubernetes-manifests/envs/stg/
+
+  build-dev:
+    desc: Build the kio-api image tagged dev-latest (linux/amd64)
+    cmds:
+      - docker buildx build --platform linux/amd64 --build-arg VERSION=dev-latest -f docker/Dockerfile.api -t {{.IMAGE}}:dev-latest .
+
+  build-prd:
+    desc: Build the kio-api image tagged with the current version (linux/amd64)
+    cmds:
+      - docker buildx build --platform linux/amd64 --build-arg VERSION={{.VERSION}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.VERSION}} .
+
+  build-stg:
+    desc: "Build the kio-api staging image (usage: task build-stg BRANCH=feat/my-feature)"
+    vars:
+      BRANCH: '{{.BRANCH | default "unknown"}}'
+      TAG:
+        sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+    cmds:
+      - docker buildx build --platform linux/amd64 --build-arg VERSION={{.BRANCH}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.TAG}} .
+
+  build-ui-dev:
+    desc: Build the kio-ui image tagged dev-latest (linux/amd64)
+    cmds:
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:dev-latest .
+
+  build-ui-prd:
+    desc: Build the kio-ui image tagged with the current version (linux/amd64)
+    cmds:
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.VERSION}} .
+
+  build-ui-stg:
+    desc: "Build the kio-ui staging image with branch banner (usage: task build-ui-stg BRANCH=feat/my-feature)"
+    vars:
+      BRANCH: '{{.BRANCH | default "unknown"}}'
+      TAG:
+        sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+    cmds:
+      - docker buildx build --platform linux/amd64 --build-arg KIO_BRANCH={{.BRANCH}} -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.TAG}} .
+
+  test:e2e:
+    desc: "Run all e2e tests (API + UI) — set KIO_API_URL, KIO_UI_URL, KIO_USERNAME, KIO_PASSWORD"
+    dir: tests/e2e
+    cmds:
+      - task: test:e2e:api
+      - task: test:e2e:ui
+
+  test:e2e:api:
+    desc: "Run API e2e tests against a live environment (pass --env=dev|stg|prd via CLI_ARGS)"
+    dir: tests/e2e
+    cmds:
+      - uv run pytest api/ -v {{.CLI_ARGS}}
+
+  test:e2e:ui:
+    desc: "Run UI e2e tests (Playwright) against a live environment"
+    dir: tests/e2e
+    cmds:
+      - uv run pytest ui/ -v {{.CLI_ARGS}}
+
+  test:e2e:install:
+    desc: Install e2e test dependencies (run once after checkout)
+    dir: tests/e2e
+    cmds:
+      - uv sync
+      - uv run playwright install chromium
+
+  bump:major:
+    desc: Bump major version (0.1.0 -> 1.0.0)
+    cmds:
+      - python3 -c "v=open('VERSION').read().strip().split('.'); v[0]=str(int(v[0])+1); v[1]='0'; v[2]='0'; open('VERSION','w').write('.'.join(v)+'\n')"
+      - echo "-> v$(cat VERSION)"
+
+  bump:minor:
+    desc: Bump minor version (0.1.0 -> 0.2.0)
+    cmds:
+      - python3 -c "v=open('VERSION').read().strip().split('.'); v[1]=str(int(v[1])+1); v[2]='0'; open('VERSION','w').write('.'.join(v)+'\n')"
+      - echo "-> v$(cat VERSION)"
+
+  bump:patch:
+    desc: Bump patch version (0.1.0 -> 0.1.1)
+    cmds:
+      - python3 -c "v=open('VERSION').read().strip().split('.'); v[2]=str(int(v[2])+1); open('VERSION','w').write('.'.join(v)+'\n')"
+      - echo "-> v$(cat VERSION)"
+
+  test:api:
+    desc: Run API unit tests
+    dir: src/api
+    cmds:
+      - uv run pytest {{.CLI_ARGS}}
+
+  db:migrate:
+    desc: Run Alembic migrations to head inside the API container
+    cmds:
+      - docker compose -f docker/docker-compose.yml --env-file docker/.env exec api uv run alembic upgrade head
+
+  dev:api:
+    desc: Run the API in Docker (requires port-forward:postgres)
+    cmds:
+      - docker compose -f docker/docker-compose.yml --env-file docker/.env up --build
+
+  dev:api:local:
+    desc: Run the API directly on the host (requires port-forward:postgres)
+    dir: src/api
+    cmds:
+      - DATABASE_URL=$(sed 's|host\.docker\.internal|localhost|g' ../.env | grep DATABASE_URL | cut -d= -f2-) .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  dev:ui:
+    desc: Run the Vue frontend dev server
+    dir: src/ui
+    cmds:
+      - npm run dev
+
+  git-tag:
+    desc: Commit the version stamp and create a git tag for the current version
+    cmds:
+      - git add VERSION kubernetes-manifests/envs/prd/kustomization.yaml
+      - git commit -m "release v{{.VERSION}}"
+      - git tag -a "v{{.VERSION}}" -m "Release v{{.VERSION}}"
+      - echo "Tagged v{{.VERSION}} -- git push origin main --tags"
+
+  ha:deploy:
+    desc: Deploy the kio Home Assistant integration and restart HA core
+    cmds:
+      - ssh home-assistant "mkdir -p /config/custom_components/kio"
+      - scp -r src/ha-integration/custom_components/kio/. home-assistant:/config/custom_components/kio/
+      - ssh home-assistant "ha core restart"
+      - echo "Deployed kio integration to Home Assistant"
+
+  kio-1:setup:
+    desc: First-time setup of kio-1 using the dev config file
+    cmds:
+      - ssh kio-1 "mkdir -p {{.KIO_DIR}}/pi-agent"
+      - scp -r src/pi-agent/. kio-1:{{.KIO_DIR}}/pi-agent
+      - scp VERSION kio-1:{{.KIO_DIR}}/pi-agent/VERSION
+      - scp configs/agents/kio-1-kiosk.dev.yaml kio-1:/tmp/kio-setup-config.yaml
+      - ssh kio-1 "sudo bash {{.KIO_DIR}}/pi-agent/setup.sh --config /tmp/kio-setup-config.yaml"
+      - ssh kio-1 "rm -f /tmp/kio-setup-config.yaml"
+
+  kio-1:deploy:
+    desc: Deploy pi-agent to kio-1 and restart the agent service
+    cmds:
+      - ssh kio-1 "mkdir -p {{.KIO_DIR}}/pi-agent"
+      - scp -r src/pi-agent/. kio-1:{{.KIO_DIR}}/pi-agent && scp VERSION kio-1:{{.KIO_DIR}}/pi-agent/VERSION
+      - ssh kio-1 "cp {{.KIO_DIR}}/pi-agent/agent.py {{.KIO_DIR}}/pi-agent/VERSION {{.KIO_DIR}}/pi-agent/requirements.txt /opt/kio-agent/"
+      - ssh kio-1 "/opt/kio-agent/venv/bin/pip install -q -r /opt/kio-agent/requirements.txt"
+      - ssh kio-1 "printf 'pkill wf-panel-pi\nunclutter-xfixes --timeout 1 &\n/opt/kio-agent/browser-start\n' > /home/pi/.config/labwc/autostart && chmod +x /home/pi/.config/labwc/autostart"
+      - ssh kio-1 "sudo systemctl restart kio-agent"
+
+  kio-1:dev:
+    desc: Push dev config to kio-1 and restart the agent
+    cmds:
+      - scp configs/agents/kio-1-kiosk.dev.yaml kio-1:/etc/kio/kiosk.yaml
+      - ssh kio-1 "sudo systemctl restart kio-agent"
+      - echo "kio-1 -> dev"
+
+  kio-1:logs:
+    desc: Stream agent logs from kio-1
+    cmds:
+      - ssh kio-1 "journalctl -fu kio-agent"
+
+  kio-1:prd:
+    desc: Push prod config to kio-1 and restart the agent
+    cmds:
+      - scp configs/agents/kio-1-kiosk.prd.yaml kio-1:/etc/kio/kiosk.yaml
+      - ssh kio-1 "sudo systemctl restart kio-agent"
+      - echo "kio-1 -> prd"
+
+  kio-1:release-prd:
+    desc: Deploy current agent files to kio-1 and switch to prod config
+    cmds:
+      - task: kio-1:deploy
+      - task: kio-1:prd
+
+  # ---------------------------------------------------------------------------
+  # Internal, variabilized kio node tasks. The per-node entrypoints below call
+  # these with HOST/CONFIG so every node stays in lockstep — only the hostname
+  # and the config file copied over differ between nodes.
+  # ---------------------------------------------------------------------------
+  # Shared install: pull main, layer the current local source over the checkout
+  # (reset --hard would otherwise revert to committed main), then run setup.sh —
+  # the idempotent installer that repairs ownership, installs the agent + venv,
+  # writes hosts/sudoers/service/autostart, and restarts. CONFIG is optional: when
+  # set, setup.sh also writes that kiosk config; when empty, it keeps the node's
+  # existing /etc/kio/kiosk.yaml. `ssh -t` lets nodes that need a sudo password
+  # prompt for it when you run the task.
+  _kio:install:
+    internal: true
+    cmds:
+      - ssh {{.HOST}} "test -d {{.KIO_DIR}}/.git || git clone {{.KIO_REPO}} {{.KIO_DIR}}"
+      - ssh {{.HOST}} "cd {{.KIO_DIR}} && git fetch origin main -q && git reset --hard origin/main -q"
+      - scp -r src/pi-agent/. {{.HOST}}:{{.KIO_DIR}}/src/pi-agent
+      - scp VERSION {{.HOST}}:{{.KIO_DIR}}/VERSION
+      - "{{if .CONFIG}}scp {{.CONFIG}} {{.HOST}}:/tmp/kio-setup-config.yaml{{else}}true{{end}}"
+      - ssh -t {{.HOST}} "sudo bash {{.KIO_DIR}}/src/pi-agent/setup.sh {{if .CONFIG}}--config /tmp/kio-setup-config.yaml{{end}}"
+      - "{{if .CONFIG}}ssh {{.HOST}} 'rm -f /tmp/kio-setup-config.yaml'{{else}}true{{end}}"
+
+  _kio:config:
+    internal: true
+    cmds:
+      - scp {{.CONFIG}} {{.HOST}}:/etc/kio/kiosk.yaml
+      - ssh {{.HOST}} "sudo systemctl restart kio-agent"
+      - echo "{{.HOST}} -> {{.CONFIG}}"
+
+  _kio:logs:
+    internal: true
+    cmds:
+      - ssh {{.HOST}} "journalctl -fu kio-agent"
+
+  kio-2:setup:
+    desc: First-time setup of kio-2 — clone the repo, then install with the dev config
+    cmds:
+      - task: _kio:install
+        vars: {HOST: kio-2, CONFIG: configs/agents/kio-2-kiosk.dev.yaml}
+
+  kio-2:deploy:
+    desc: Deploy kio-2 — pull main, layer local source, run setup.sh (keeps config), restart
+    cmds:
+      - task: _kio:install
+        vars: {HOST: kio-2}
+      - scp configs/agents/kio-2-kanshi-config kio-2:/home/pi/.config/kanshi/config
+
+  kio-2:dev:
+    desc: Push dev config to kio-2 and restart the agent
+    cmds:
+      - task: _kio:config
+        vars: {HOST: kio-2, CONFIG: configs/agents/kio-2-kiosk.dev.yaml}
+
+  kio-2:prd:
+    desc: Push prod config to kio-2 and restart the agent
+    cmds:
+      - task: _kio:config
+        vars: {HOST: kio-2, CONFIG: configs/agents/kio-2-kiosk.prd.yaml}
+
+  kio-2:logs:
+    desc: Stream agent logs from kio-2
+    cmds:
+      - task: _kio:logs
+        vars: {HOST: kio-2}
+
+  kio-2:release-dev:
+    desc: Deploy current agent files to kio-2 and switch to dev config
+    cmds:
+      - task: kio-2:deploy
+      - task: kio-2:dev
+
+  kio-2:release-prd:
+    desc: Deploy current agent files to kio-2 and switch to prod config
+    cmds:
+      - task: kio-2:deploy
+      - task: kio-2:prd
+
+  kio-3:setup:
+    desc: First-time setup of kio-3 — clone the repo, then install with the dev config
+    cmds:
+      - task: _kio:install
+        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.dev.yaml}
+
+  kio-3:deploy:
+    desc: Deploy kio-3 — pull main, layer local source, run setup.sh (keeps config), restart
+    cmds:
+      - task: _kio:install
+        vars: {HOST: kio-3}
+
+  kio-3:dev:
+    desc: Push dev config to kio-3 and restart the agent
+    cmds:
+      - task: _kio:config
+        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.dev.yaml}
+
+  kio-3:prd:
+    desc: Push prod config to kio-3 and restart the agent (needs a prd node token)
+    cmds:
+      - task: _kio:config
+        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.prd.yaml}
+
+  kio-3:logs:
+    desc: Stream agent logs from kio-3
+    cmds:
+      - task: _kio:logs
+        vars: {HOST: kio-3}
+
+  kio-3:release-dev:
+    desc: Deploy current agent files to kio-3 and switch to dev config
+    cmds:
+      - task: kio-3:deploy
+      - task: kio-3:dev
+
+  kio-3:release-prd:
+    desc: Deploy current agent files to kio-3 and switch to prod config
+    cmds:
+      - task: kio-3:deploy
+      - task: kio-3:prd
+
+  mqtt:monitor:
+    desc: Watch all kio MQTT messages in real time
+    cmds:
+      - mosquitto_sub -h {{.MQTT_HOST}} -p 1883 -t 'kio/#' -v
+
+  port-forward:postgres:
+    desc: Forward localhost:5432 to q-postgres in the cluster
+    cmds:
+      - kubectl port-forward -n q-postgres svc/q-postgres-rw 5432:5432
+
+  push-dev:
+    desc: Push the dev API image to Harbor
+    cmds:
+      - docker push {{.IMAGE}}:dev-latest
+
+  push-prd:
+    desc: Push the versioned API image to Harbor
+    cmds:
+      - docker push {{.IMAGE}}:{{.VERSION}}
+
+  push-stg:
+    desc: "Push the staging API image to Harbor (usage: task push-stg BRANCH=feat/my-feature)"
+    vars:
+      BRANCH: '{{.BRANCH | default "unknown"}}'
+      TAG:
+        sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+    cmds:
+      - docker push {{.IMAGE}}:{{.TAG}}
+
+  push-ui-dev:
+    desc: Push the dev UI image to Harbor
+    cmds:
+      - docker push {{.IMAGE_UI}}:dev-latest
+
+  push-ui-prd:
+    desc: Push the versioned UI image to Harbor
+    cmds:
+      - docker push {{.IMAGE_UI}}:{{.VERSION}}
+
+  push-ui-stg:
+    desc: "Push the staging UI image to Harbor (usage: task push-ui-stg BRANCH=feat/my-feature)"
+    vars:
+      BRANCH: '{{.BRANCH | default "unknown"}}'
+      TAG:
+        sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+    cmds:
+      - docker push {{.IMAGE_UI}}:{{.TAG}}
+
+  release-dev:
+    desc: Build, push, and deploy API + UI to kio-dev
+    cmds:
+      - task: build-dev
+      - task: push-dev
+      - task: build-ui-dev
+      - task: push-ui-dev
+      - task: apply-dev
+      - task: rollout-dev
+
+  release-prd:
+    desc: "Full production release: build API + UI, push, stamp kustomization, deploy, git-tag"
+    cmds:
+      - task: stamp-prd
+      - task: build-prd
+      - task: push-prd
+      - task: build-ui-prd
+      - task: push-ui-prd
+      - task: apply-prd
+      - task: rollout-prd
+      - task: git-tag
+
+  release-stg:
+    desc: "Build, push, and deploy staging from a branch (usage: task release-stg BRANCH=feat/my-feature)"
+    vars:
+      BRANCH: '{{.BRANCH | default "unknown"}}'
+    cmds:
+      - task: build-stg
+        vars:
+          BRANCH: '{{.BRANCH}}'
+      - task: push-stg
+        vars:
+          BRANCH: '{{.BRANCH}}'
+      - task: build-ui-stg
+        vars:
+          BRANCH: '{{.BRANCH}}'
+      - task: push-ui-stg
+        vars:
+          BRANCH: '{{.BRANCH}}'
+      - task: stamp-stg
+        vars:
+          BRANCH: '{{.BRANCH}}'
+      - task: apply-stg
+      - task: rollout-stg
+
+  stamp-stg:
+    desc: "Write branch-derived image tags into stg kustomization.yaml (usage: task stamp-stg BRANCH=feat/my-feature)"
+    vars:
+      BRANCH: '{{.BRANCH | default "unknown"}}'
+      TAG:
+        sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+    dir: kubernetes-manifests/envs/stg
+    cmds:
+      - kustomize edit set image {{.IMAGE}}:{{.TAG}}
+      - kustomize edit set image {{.IMAGE_UI}}:{{.TAG}}
+
+  rollout-dev:
+    desc: Restart kio-api in kio-dev and wait for rollout
+    cmds:
+      - kubectl rollout restart deployment/kio-api -n kio-dev
+      - kubectl rollout status deployment/kio-api -n kio-dev --timeout=120s
+
+  rollout-prd:
+    desc: Restart kio-api in kio and wait for rollout
+    cmds:
+      - kubectl rollout restart deployment/kio-api -n kio
+      - kubectl rollout status deployment/kio-api -n kio --timeout=120s
+
+  rollout-stg:
+    desc: Restart kio-api and kio-ui in kio-stg and wait for rollout
+    cmds:
+      - kubectl rollout restart deployment/kio-api -n kio-stg
+      - kubectl rollout restart deployment/kio-ui -n kio-stg
+      - kubectl rollout status deployment/kio-api -n kio-stg --timeout=120s
+      - kubectl rollout status deployment/kio-ui -n kio-stg --timeout=120s
+
+  teardown-stg:
+    desc: Delete the kio-api and kio-ui deployments from kio-stg
+    cmds:
+      - kubectl delete deployment kio-api kio-ui -n kio-stg --ignore-not-found
+
+  stamp-prd:
+    desc: Write the current version into the prd kustomization.yaml
+    dir: kubernetes-manifests/envs/prd
+    cmds:
+      - kustomize edit set image {{.IMAGE}}:{{.VERSION}}
+      - kustomize edit set image {{.IMAGE_UI}}:{{.VERSION}}
+
+  version:
+    desc: Show the current version
+    cmds:
+      - echo "v{{.VERSION}}"

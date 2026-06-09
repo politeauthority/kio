@@ -1,0 +1,8 @@
+#!/bin/bash
+# Force vc4-kms-v3d HDMI connectors on via debugfs so the Pi drives HDMI signal
+# even when the TV was off at boot and asserted no HPD.
+# Must run as root (called via sudo from kio-agent service).
+for connector in HDMI-A-1 HDMI-A-2; do
+  f="/sys/kernel/debug/dri/gpu/${connector}/force"
+  [[ -f "$f" ]] && echo on > "$f" 2>/dev/null || true
+done

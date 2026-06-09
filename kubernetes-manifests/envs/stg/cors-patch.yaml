@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kio-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: kio-api
+          env:
+            - name: CORS_ORIGINS
+              value: '["http://stg.kio.colfax.int"]'

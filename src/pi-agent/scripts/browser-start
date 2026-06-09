@@ -1,0 +1,31 @@
+#!/bin/bash
+
+START_URL=$(python3 -c "
+with open('/etc/kio/kiosk.yaml') as f:
+    for line in f:
+        s = line.strip()
+        if s.startswith('start_url:'):
+            print(s.split(':', 1)[1].strip())
+            break
+" 2>/dev/null)
+
+# Core flags — always on
+CORE_FLAGS=(
+  --password-store=basic
+  --kiosk
+  --remote-debugging-port=9222
+  --remote-allow-origins=http://localhost:9222
+  --hide-crash-restore-bubble
+  --hide-scrollbars
+)
+
+# Optional flags — managed via kio dashboard, written by the agent on startup
+FLAGS_FILE="/etc/kio/browser-flags"
+OPTIONAL_FLAGS=()
+if [ -f "$FLAGS_FILE" ]; then
+  while IFS= read -r flag; do
+    [[ -n "$flag" ]] && OPTIONAL_FLAGS+=("$flag")
+  done < "$FLAGS_FILE"
+fi
+
+chromium "${CORE_FLAGS[@]}" "${OPTIONAL_FLAGS[@]}" "${START_URL}" > /dev/null 2>&1 &

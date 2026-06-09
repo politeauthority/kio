@@ -1,0 +1,45 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kio-ui
+  labels:
+    app.kubernetes.io/instance: kio
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: nginx-private
+      namespace: nginx-gateway-fabric-private
+  hostnames:
+    - kio.colfax.int
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: kio-ui
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kio-api
+  labels:
+    app.kubernetes.io/instance: kio
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: nginx-private
+      namespace: nginx-gateway-fabric-private
+  hostnames:
+    - api.kio.colfax.int
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: kio-api
+          port: 8000

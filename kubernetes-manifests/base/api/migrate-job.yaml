@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kio-migrate
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: harbor-registry
+      containers:
+        - name: migrate
+          image: harbor.squid-ink.us/politeauthority/kio-api:latest
+          imagePullPolicy: Always
+          command: ["alembic", "upgrade", "head"]
+          workingDir: /app
+          envFrom:
+            - secretRef:
+                name: kio-api
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"

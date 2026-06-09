@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# kio-agent launcher — runs agent.py (HTTP heartbeats + MQTT command listener)
+set -euo pipefail
+
+AGENT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+VENV_PYTHON="$AGENT_DIR/venv/bin/python"
+
+if [ -f "$VENV_PYTHON" ]; then
+    PYTHON="$VENV_PYTHON"
+else
+    PYTHON="python3"
+fi
+
+exec "$PYTHON" "$AGENT_DIR/agent.py"

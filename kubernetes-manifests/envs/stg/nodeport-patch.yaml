@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kio-api-nodeport
+spec:
+  ports:
+    - name: api
+      port: 8000
+      targetPort: api
+      nodePort: 30801

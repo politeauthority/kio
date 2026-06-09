@@ -1,0 +1,18 @@
+[Unit]
+Description=kio Kiosk Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alix
+WorkingDirectory=/opt/kio-agent
+ExecStartPre=/usr/bin/sudo /opt/kio-agent/force-hdmi
+ExecStart=/opt/kio-agent/venv/bin/python /opt/kio-agent/agent.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kio-api
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: kio-api
+  template:
+    metadata:
+      labels:
+        app: kio-api
+    spec:
+      imagePullSecrets:
+        - name: harbor-registry
+      containers:
+        - name: kio-api
+          image: harbor.squid-ink.us/politeauthority/kio-api:latest
+          imagePullPolicy: Always
+          command:
+            - python
+            - -m
+            - uvicorn
+            - app.main:app
+            - --host=0.0.0.0
+            - --port=8000
+            - --timeout-keep-alive
+            - "75"
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 20"]
+          ports:
+            - name: api
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: kio-api-config
+            - secretRef:
+                name: kio-api
+          env:
+            - name: MQTT_TOPIC_PREFIX
+              value: kio/prd
+            - name: MQTT_NODE_HOST
+              value: "192.168.50.86"
+            - name: MQTT_NODE_PORT
+              value: "1883"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /_health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /_health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          startupProbe:
+            httpGet:
+              path: /_health
+              port: 8000
+            failureThreshold: 30
+            periodSeconds: 10

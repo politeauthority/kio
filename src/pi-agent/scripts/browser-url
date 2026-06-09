@@ -1,0 +1,4 @@
+#!/bin/bash
+# Browser URL
+#   Make the Browser go to the URL
+DISPLAY=:0 chromium "$1"

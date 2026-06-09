@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kio-dev
+images:
+  - name: harbor.squid-ink.us/politeauthority/kio-api
+    newTag: dev-latest
+  - name: harbor.squid-ink.us/politeauthority/kio-ui
+    newTag: dev-latest
+resources:
+  - ../../base
+  - ./httproute.yaml
+  - ./secrets/sealed-api-secrets.yaml
+
+patches:
+  - path: api-configmap-patch.yaml
+    target:
+      kind: ConfigMap
+      name: kio-api-config
+  - path: mqtt-patch.yaml
+    target:
+      kind: Deployment
+      name: kio-api
+  - path: cors-patch.yaml
+    target:
+      kind: Deployment
+      name: kio-api
+  - path: ui-patch.yaml
+    target:
+      kind: Deployment
+      name: kio-ui

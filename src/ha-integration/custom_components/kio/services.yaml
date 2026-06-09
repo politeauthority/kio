@@ -1,0 +1,3 @@
+refresh:
+  name: Refresh
+  description: Force an immediate data refresh from the kio API for all configured instances.

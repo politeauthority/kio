@@ -1,0 +1,26 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to kio",
+        "data": {
+          "api_url": "API URL",
+          "api_key": "API Key",
+          "api_ip": "API IP Override"
+        },
+        "data_description": {
+          "api_url": "Base URL of your kio API, e.g. http://api.kio.example.local",
+          "api_key": "Optional API key (X-API-Key). Leave blank if auth is disabled.",
+          "api_ip": "Optional. If HA cannot resolve the hostname (e.g. .int TLD DNS issue), enter the server IP here (e.g. 192.168.1.10)."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the kio API. Check the URL and network.",
+      "invalid_auth": "API key was rejected (HTTP 401)."
+    },
+    "abort": {
+      "already_configured": "This kio instance is already configured."
+    }
+  }
+}

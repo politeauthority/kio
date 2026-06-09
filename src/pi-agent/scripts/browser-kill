@@ -1,0 +1,3 @@
+#!/bin/bash
+# Kill Browserr
+DISPLAY=:0 pkill chromium
