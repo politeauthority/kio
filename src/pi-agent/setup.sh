@@ -14,7 +14,6 @@
 #   --token       Node token (kio_...)
 #   --start-url   Initial URL Chromium opens on boot
 #   --features    Comma-separated: display_power,cec,input_switch
-#   --gateway-ip  Cluster gateway IP for kio /etc/hosts entries (prompted on first install)
 
 set -euo pipefail
 
@@ -97,9 +96,6 @@ fix_owner() {
 
 MQTT_HOST_DEFAULT="192.168.1.100"
 MQTT_PORT_DEFAULT="1883"
-# Cluster gateway that serves the kio API/UI hostnames. LAN nodes have no DNS for
-# these *.example.local names, so setup.sh writes static /etc/hosts entries for them.
-KIO_GATEWAY_IP="192.168.1.10"
 # These are overridden by values from /agent/config if the API provides them
 
 # ---------------------------------------------------------------------------
@@ -112,13 +108,12 @@ API_TOKEN_ARG=""
 START_URL_ARG=""
 FEATURES_ARG=""
 CONFIG_FILE_ARG=""
-GATEWAY_IP_ARG=""
 CLEAR=0
 
 while [[ $# -gt 0 ]]; do
   opt="$1"
   case "$opt" in
-    --env|--api-url|--token|--start-url|--features|--config|--gateway-ip)
+    --env|--api-url|--token|--start-url|--features|--config)
       # Value-taking options: fail clearly if the value is missing (rather than a
       # cryptic "$2: unbound variable" under set -u).
       [[ $# -ge 2 ]] || { echo "Error: $opt requires a value"; exit 1; }
@@ -130,50 +125,11 @@ while [[ $# -gt 0 ]]; do
         --start-url)  START_URL_ARG="$val" ;;
         --features)   FEATURES_ARG="$val" ;;
         --config)     CONFIG_FILE_ARG="$val" ;;
-        --gateway-ip) GATEWAY_IP_ARG="$val" ;;
       esac ;;
     --clear) CLEAR=1; shift ;;
     *) echo "Unknown option: $opt"; exit 1 ;;
   esac
 done
-
-# Gateway IP: arg overrides the built-in default; the interactive first-install
-# path below prompts for it. Non-interactive paths (--config, existing config)
-# use the arg or the default without prompting.
-GATEWAY_IP="${GATEWAY_IP_ARG:-$KIO_GATEWAY_IP}"
-
-# Static /etc/hosts entries for the kio API/UI hostnames, pointed at the cluster
-# gateway. The agent must resolve its API hostname before it can talk to the API,
-# so these can't come from the agent's dynamic host sync — they live in their own
-# marker block, separate from the agent-managed (# kio-managed-*) block.
-#
-# Raspberry Pi OS images ship with cloud-init managing /etc/hosts: on every boot
-# it regenerates the file from /etc/cloud/templates/hosts.debian.tmpl, wiping
-# anything written directly to /etc/hosts. So we write the block to BOTH the live
-# file (immediate effect) and the template (survives the boot-time regeneration).
-# Idempotent on each run.
-write_kio_hosts() {
-  local tmpl="/etc/cloud/templates/hosts.debian.tmpl"
-  local block
-  block=$(cat <<EOF
-# kio-infra-start
-$GATEWAY_IP grafana.example.local
-$GATEWAY_IP kio.example.local api.kio.example.local
-$GATEWAY_IP kio-dev.example.local api.kio-dev.example.local
-$GATEWAY_IP stg.kio.example.local api.stg.kio.example.local
-# kio-infra-end
-EOF
-)
-  # Live file — takes effect immediately (until the next cloud-init regeneration).
-  sudo sed -i '/# kio-infra-start/,/# kio-infra-end/d' /etc/hosts
-  printf '%s\n' "$block" | sudo tee -a /etc/hosts > /dev/null
-  # cloud-init template — so the entries survive the boot-time /etc/hosts rebuild.
-  if [[ -f "$tmpl" ]]; then
-    sudo sed -i '/# kio-infra-start/,/# kio-infra-end/d' "$tmpl"
-    printf '%s\n' "$block" | sudo tee -a "$tmpl" > /dev/null
-  fi
-  echo "  Wrote kio API host entries to /etc/hosts + cloud-init template (gateway $GATEWAY_IP)"
-}
 
 # ---------------------------------------------------------------------------
 # --clear: remove stored env config and exit
@@ -310,19 +266,11 @@ elif [[ -f "$CONFIG_FILE" ]] && [[ -z "$API_TOKEN_ARG" ]]; then
   MQTT_HOST=$(yaml_get_nested mqtt host)
   MQTT_PORT=$(yaml_get_nested mqtt port)
   MQTT_PREFIX=$(yaml_get_nested mqtt topic_prefix)
-  write_kio_hosts  # so a hostname API_URL resolves for the reachability check below
   check_api_reachable "$API_URL"
 else
   # API URL is taken only from an explicit --api-url on first install; it is never
   # assumed from a built-in preset.
   [[ -n "$API_URL_ARG" ]] && API_URL="$API_URL_ARG"
-
-  # Prompt for the cluster gateway IP (used for the kio /etc/hosts entries), then
-  # write the host entries so a hostname-based API URL resolves for the check below.
-  echo ""
-  read -rp "Cluster gateway IP [$GATEWAY_IP]: " _gw
-  [[ -n "$_gw" ]] && GATEWAY_IP="$_gw"
-  write_kio_hosts
 
   # Prompt for the API URL only when not supplied via --api-url — no default is offered.
   if [[ -z "$API_URL" ]]; then
@@ -471,10 +419,6 @@ if [[ -f "$CMDLINE" ]] && ! grep -q "video=HDMI-A-1:" "$CMDLINE"; then
   sudo sed -i 's/$/ video=HDMI-A-1:1920x1080@60/' "$CMDLINE"
   echo "  Added video=HDMI-A-1:1920x1080@60 to $CMDLINE (forces KMS to enable HDMI output)"
 fi
-
-# Write the kio API host entries (live file + cloud-init template). Safe to call
-# again here even if an earlier config-source branch already did — it's idempotent.
-write_kio_hosts
 
 # Save env-specific config so future --env switches don't need prompting
 if [[ -n "$ENV" ]]; then
