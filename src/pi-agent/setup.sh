@@ -18,10 +18,36 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ${BASH_SOURCE[0]:-$0} so this doesn't trip `set -u` when piped via stdin
+# (e.g. `curl ... | bash`), where BASH_SOURCE is unset.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 INSTALL_DIR="/opt/kio-agent"
 CONFIG_FILE="/etc/kio/kiosk.yaml"
 CONFIG_DIR="/etc/kio"
+
+# ---------------------------------------------------------------------------
+# Self-bootstrap for `curl ... | bash`
+# ---------------------------------------------------------------------------
+# When piped from stdin the agent's sibling files (agent.py, scripts/, the service
+# unit) aren't on disk, and interactive `read` prompts would consume the piped
+# script instead of terminal input. If those files aren't beside us, clone the repo
+# and re-exec setup.sh from the checkout with stdin reconnected to the terminal.
+if [[ -z "${KIO_BOOTSTRAPPED:-}" && ( -z "$SCRIPT_DIR" || ! -f "$SCRIPT_DIR/agent.py" ) ]]; then
+  KIO_REPO="${KIO_REPO:-https://github.com/politeauthority/kio.git}"
+  KIO_BRANCH="${KIO_BRANCH:-main}"
+  echo "  Fetching kio agent source ($KIO_REPO@$KIO_BRANCH) ..."
+  if ! command -v git >/dev/null 2>&1; then
+    sudo apt-get update -q && sudo apt-get install -y -q git
+  fi
+  _boot="$(mktemp -d)"
+  git clone --depth 1 --branch "$KIO_BRANCH" "$KIO_REPO" "$_boot/kio"
+  export KIO_BOOTSTRAPPED=1
+  if [[ -e /dev/tty ]]; then
+    exec bash "$_boot/kio/src/pi-agent/setup.sh" "$@" </dev/tty
+  else
+    exec bash "$_boot/kio/src/pi-agent/setup.sh" "$@"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Run-as-user resolution
