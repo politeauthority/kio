@@ -144,8 +144,8 @@
       </div>
     </div>
 
-    <!-- Browser flags -->
-    <div class="card mt-lg">
+    <!-- Browser flags — temporarily hidden -->
+    <!-- <div class="card mt-lg">
       <div class="card-header">Browser Flags</div>
 
       <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: var(--space-md)">
@@ -179,10 +179,10 @@
       <p class="text-xs text-muted mt-md" style="color: var(--warning)">
         ⚠ Changes take effect after the next reboot
       </p>
-    </div>
+    </div> -->
 
-    <!-- Hosts -->
-    <div class="card mt-lg">
+    <!-- Hosts — temporarily hidden -->
+    <!-- <div class="card mt-lg">
       <div class="card-header">Hosts</div>
       <p class="text-xs text-muted" style="margin-bottom: 0.75rem">
         Injected into <code>/etc/hosts</code> on the node at startup. Format: <code>IP hostname [hostname...]</code> — one entry per line.
@@ -202,7 +202,7 @@
           {{ err }}
         </div>
       </div>
-    </div>
+    </div> -->
 
     <!-- Agent overrides -->
     <div class="card mt-lg">
