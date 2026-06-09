@@ -37,10 +37,16 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { ref, onMounted } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 import { useFeatureFlagsStore } from '../stores/featureFlags'
 import { useToastStore } from '../stores/toast'
+import { SHOW_FEATURE_FLAGS } from '../config'
+
+const router = useRouter()
+onMounted(() => {
+  if (!SHOW_FEATURE_FLAGS) router.replace('/settings')
+})
 
 const flagStore = useFeatureFlagsStore()
 const toast = useToastStore()

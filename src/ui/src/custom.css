@@ -524,6 +524,22 @@ code {
 }
 
 .status-online { color: var(--success); }
+.status-online::before {
+  display: inline-block;
+  animation: pulse-online 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse-online {
+  0%, 100% {
+    transform: scale(1);
+    text-shadow: 0 0 3px var(--success);
+  }
+  50% {
+    transform: scale(1.25);
+    text-shadow: 0 0 6px var(--success), 0 0 14px var(--success);
+  }
+}
+
 .status-offline { color: var(--danger); }
 .status-unknown { color: var(--text-muted); }
 

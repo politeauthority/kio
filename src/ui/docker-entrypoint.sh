@@ -6,12 +6,14 @@ API_URL="${API_URL:-}"
 OIDC_AUTHORITY="${OIDC_AUTHORITY:-}"
 OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-}"
 KIO_BRANCH="${KIO_BRANCH:-}"
+SHOW_FEATURE_FLAGS="${SHOW_FEATURE_FLAGS:-}"
 
 sed -i \
   -e "s|__API_URL__|${API_URL}|g" \
   -e "s|__OIDC_AUTHORITY__|${OIDC_AUTHORITY}|g" \
   -e "s|__OIDC_CLIENT_ID__|${OIDC_CLIENT_ID}|g" \
   -e "s|__KIO_BRANCH__|${KIO_BRANCH}|g" \
+  -e "s|__SHOW_FEATURE_FLAGS__|${SHOW_FEATURE_FLAGS}|g" \
   /usr/share/nginx/html/index.html
 
 exec "$@"
