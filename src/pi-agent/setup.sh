@@ -3,16 +3,14 @@
 #
 # First install (no existing config):
 #   bash setup.sh                          # prompts for API URL and token
-#   bash setup.sh --env dev                # uses dev API URL, prompts for token
-#   bash setup.sh --env prd               # uses prod API URL, prompts for token
 #   bash setup.sh --api-url URL --token T  # fully non-interactive
 #
 # Re-install / update (config already exists at /etc/kio/kiosk.conf):
 #   bash setup.sh                          # reads existing config, reinstalls agent
 #
 # Options:
-#   --env         dev or prd  (sets API URL from preset)
-#   --api-url     Override API URL
+#   --env         dev or prd  (selects the stored per-env config on re-install)
+#   --api-url     API URL (required on first install; no preset default is assumed)
 #   --token       Node token (kio_...)
 #   --start-url   Initial URL Chromium opens on boot
 #   --features    Comma-separated: display_power,cec,input_switch
@@ -71,8 +69,6 @@ fix_owner() {
   fi
 }
 
-DEV_API_URL="http://kio-dev.example.local"
-PRD_API_URL="https://api.kio.example.local"
 MQTT_HOST_DEFAULT="192.168.1.100"
 MQTT_PORT_DEFAULT="1883"
 # Cluster gateway that serves the kio API/UI hostnames. LAN nodes have no DNS for
@@ -291,15 +287,9 @@ elif [[ -f "$CONFIG_FILE" ]] && [[ -z "$API_TOKEN_ARG" ]]; then
   write_kio_hosts  # so a hostname API_URL resolves for the reachability check below
   check_api_reachable "$API_URL"
 else
-  # Determine default API URL from --env or --api-url
-  DEFAULT_URL=""
-  if [[ -n "$API_URL_ARG" ]]; then
-    DEFAULT_URL="$API_URL_ARG"
-  elif [[ "$ENV" == "dev" ]]; then
-    DEFAULT_URL="$DEV_API_URL"
-  elif [[ "$ENV" == "prd" ]]; then
-    DEFAULT_URL="$PRD_API_URL"
-  fi
+  # API URL is taken only from an explicit --api-url on first install; it is never
+  # assumed from a built-in preset.
+  [[ -n "$API_URL_ARG" ]] && API_URL="$API_URL_ARG"
 
   # Prompt for the cluster gateway IP (used for the kio /etc/hosts entries), then
   # write the host entries so a hostname-based API URL resolves for the check below.
@@ -308,15 +298,12 @@ else
   [[ -n "$_gw" ]] && GATEWAY_IP="$_gw"
   write_kio_hosts
 
-  # Always prompt for API URL, showing the default if one exists
-  echo ""
-  if [[ -n "$DEFAULT_URL" ]]; then
-    read -rp "API URL [$DEFAULT_URL]: " API_URL
-    [[ -z "$API_URL" ]] && API_URL="$DEFAULT_URL"
-  else
+  # Prompt for the API URL only when not supplied via --api-url — no default is offered.
+  if [[ -z "$API_URL" ]]; then
+    echo ""
     read -rp "API URL: " API_URL
   fi
-  [[ -z "$API_URL" ]] && echo "API URL is required" && exit 1
+  [[ -z "$API_URL" ]] && echo "API URL is required (pass --api-url or enter it when prompted)" && exit 1
 
   check_api_reachable "$API_URL"
 
