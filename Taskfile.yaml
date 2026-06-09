@@ -10,10 +10,6 @@ vars:
   IMAGE_UI: "{{.HARBOR}}/kio-ui"
   VERSION:
     sh: cat VERSION
-  # Pi nodes keep a git checkout of the repo here; deploys pull main then layer
-  # the current local agent source on top before installing to /opt/kio-agent.
-  KIO_REPO:
-    sh: bash -c '. .env 2>/dev/null; echo "${KIO_REPO:-git@github.com:your-org/kio.git}"'
   KIO_DIR:
     sh: bash -c '. .env 2>/dev/null; echo "${KIO_DIR:-/home/pi/kio}"'
   MQTT_HOST:
@@ -223,13 +219,12 @@ tasks:
   _kio:install:
     internal: true
     cmds:
-      - ssh {{.HOST}} "test -d {{.KIO_DIR}}/.git || git clone {{.KIO_REPO}} {{.KIO_DIR}}"
-      - ssh {{.HOST}} "cd {{.KIO_DIR}} && git fetch origin main -q && git reset --hard origin/main -q"
-      - scp -r src/pi-agent/. {{.HOST}}:{{.KIO_DIR}}/src/pi-agent
-      - scp VERSION {{.HOST}}:{{.KIO_DIR}}/VERSION
+      - scp -r src/pi-agent/. {{.HOST}}:/tmp/kio-deploy
+      - scp VERSION {{.HOST}}:/tmp/kio-deploy/VERSION
       - "{{if .CONFIG}}scp {{.CONFIG}} {{.HOST}}:/tmp/kio-setup-config.yaml{{else}}true{{end}}"
-      - ssh -t {{.HOST}} "sudo bash {{.KIO_DIR}}/src/pi-agent/setup.sh {{if .CONFIG}}--config /tmp/kio-setup-config.yaml{{end}}"
+      - ssh -t {{.HOST}} "sudo bash /tmp/kio-deploy/setup.sh {{if .CONFIG}}--config /tmp/kio-setup-config.yaml{{end}}"
       - "{{if .CONFIG}}ssh {{.HOST}} 'rm -f /tmp/kio-setup-config.yaml'{{else}}true{{end}}"
+      - ssh {{.HOST}} "rm -rf /tmp/kio-deploy"
 
   _kio:config:
     internal: true
@@ -260,11 +255,10 @@ tasks:
         vars: {HOST: kio-2, CONFIG: configs/agents/kio-2-kiosk.dev.yaml}
 
   kio-2:deploy:
-    desc: Deploy kio-2 — pull main, layer local source, run setup.sh (keeps config), restart
+    desc: Deploy kio-2 — scp local source, run setup.sh (keeps config), restart
     cmds:
       - task: _kio:install
         vars: {HOST: kio-2}
-      - scp configs/agents/kio-2-kanshi-config kio-2:/home/pi/.config/kanshi/config
 
   kio-2:dev:
     desc: Sync pi-agent code to kio-2, push dev config, restart agent

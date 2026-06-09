@@ -81,6 +81,40 @@
       </div>
     </div>
 
+    <!-- Display resolution -->
+    <div v-if="Object.keys(displayModesFromLog(detectLog)).length" class="card mt-lg">
+      <div class="card-header">Display Resolution</div>
+      <p class="text-xs text-muted" style="margin-bottom: 0.75rem">
+        Select a resolution and click Apply — it takes effect immediately and is saved so the node re-applies it after a reboot.
+      </p>
+      <div style="display: flex; flex-direction: column; gap: 0.6rem">
+        <div
+          v-for="(modes, output) in displayModesFromLog(detectLog)"
+          :key="output"
+          style="display: flex; align-items: center; gap: 0.75rem"
+        >
+          <span class="text-sm" style="min-width: 100px">{{ outputDisplayLabel(output) }}</span>
+          <select
+            v-model="selectedResolutions[output]"
+            class="form-input"
+            style="width: 240px"
+          >
+            <option v-for="m in modes" :key="`${m.mode}@${m.rate ?? 'x'}`" :value="`${m.mode}@${m.rate ?? ''}`">
+              {{ m.mode }}{{ m.rate ? ` @ ${m.rate} Hz` : '' }}{{ m.current ? ' (current)' : '' }}{{ m.preferred ? ' ✓' : '' }}
+            </option>
+          </select>
+          <button
+            class="btn btn-secondary"
+            style="padding: 0.25rem 0.75rem; font-size: 0.8rem"
+            :disabled="settingResolution || blocked"
+            @click="applyResolution(output)"
+          >
+            {{ settingResolution ? 'Applying…' : 'Apply' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Input configuration -->
     <div v-if="featuresSet.has('input_switch') && !capUnsupported('input_switch')" class="card mt-lg">
       <div class="card-header">Input Configuration</div>
@@ -392,6 +426,63 @@ function toggleControl(key) {
 const featuresSet = ref(new Set())
 const detecting = ref(false)
 
+// Resolution: map of output name -> selected mode string "WxH@R" or "WxH"
+const selectedResolutions = ref({})
+const settingResolution = ref(false)
+
+function displayModesFromLog(log) {
+  return log?.hardware_info?.display_modes ?? {}
+}
+
+// Map wlr-randr output names to the input keys used by inputLabels
+const OUTPUT_TO_INPUT_KEY = {
+  'HDMI-A-1': 'hdmi1',
+  'HDMI-A-2': 'hdmi2',
+  'DP-1':     'dp1',
+  'DP-2':     'dp2',
+}
+
+function outputDisplayLabel(output) {
+  const normalized = output.replace(/^card\d+-/, '')
+  const key = OUTPUT_TO_INPUT_KEY[normalized]
+  if (key && inputLabels.value[key]) return inputLabels.value[key]
+  const inp = ALL_INPUTS.find(i => i.value === key)
+  if (inp) return inp.defaultLabel
+  return output
+}
+
+function initResolutionSelections(log) {
+  const dm = displayModesFromLog(log)
+  const next = {}
+  for (const [output, modes] of Object.entries(dm)) {
+    const current = modes.find(m => m.current)
+    const seed = current ?? modes[0]
+    next[output] = seed ? `${seed.mode}@${seed.rate ?? ''}` : ''
+  }
+  selectedResolutions.value = next
+}
+
+async function applyResolution(output) {
+  const val = selectedResolutions.value[output]
+  if (!val) return
+  const atIdx = val.lastIndexOf('@')
+  const mode = atIdx !== -1 ? val.slice(0, atIdx) : val
+  const rateStr = atIdx !== -1 ? val.slice(atIdx + 1) : ''
+  const rate = rateStr ? parseFloat(rateStr) : null
+  settingResolution.value = true
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/set-resolution`, {
+      method: 'POST',
+      body: JSON.stringify({ output, mode, rate }),
+    })
+    toast.add(`Resolution change sent: ${output} ${mode}${rate ? ` @ ${rate} Hz` : ''}`, 'success')
+  } catch {
+    toast.add('Failed to set resolution', 'error')
+  } finally {
+    settingResolution.value = false
+  }
+}
+
 function isOverridden(key) {
   const val = overrides.value[key]
   if (val === '' || val == null || Number.isNaN(Number(val))) return false
@@ -446,6 +537,10 @@ async function detectCapabilities() {
           featuresSet.value = new Set(k.features || [])
           if (after !== before) toast.add(`Detected: ${k.features.join(', ') || 'none'}`, 'success')
           else toast.add('Detection complete — no changes', 'info')
+          // Refresh detect log so display_modes update immediately
+          const log = await apiFetch(`/kiosks/${kioskId.value}/hardware-detect-log`).catch(() => null)
+          detectLog.value = log
+          initResolutionSelections(log)
         }
       } catch { clearInterval(poll); detecting.value = false }
     }, 2000)
@@ -495,6 +590,7 @@ async function load() {
     overrides.value = { ...(k.meta?.settings_overrides ?? {}) }
     tokens.value = t
     detectLog.value = log
+    initResolutionSelections(log)
   } catch {
     toast.add('Failed to load kiosk', 'error')
   } finally {

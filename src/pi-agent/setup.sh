@@ -16,25 +16,11 @@
 #   --token       Node token (kio_...)
 #   --start-url   Initial URL Chromium opens on boot
 #   --features    Comma-separated: display_power,cec,input_switch
+#   --gateway-ip  Cluster gateway IP for kio /etc/hosts entries (prompted on first install)
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-
-# When invoked via `curl | bash`, there is no agent.py alongside this script.
-# Fetch the full source tree from GitHub and re-exec from the real path.
-KIO_GITHUB_BRANCH="bootstrap"
-KIO_GITHUB_REPO="https://github.com/politeauthority/kio"
-
-if [[ ! -f "$SCRIPT_DIR/agent.py" ]]; then
-  FETCH_DIR="$(mktemp -d)"
-  echo "Fetching kio agent (branch: $KIO_GITHUB_BRANCH)..."
-  curl -fsSL "${KIO_GITHUB_REPO}/archive/refs/heads/${KIO_GITHUB_BRANCH}.tar.gz" \
-    | tar -xz -C "$FETCH_DIR" --strip-components=1
-  [[ -f "$FETCH_DIR/VERSION" ]] && cp "$FETCH_DIR/VERSION" "$FETCH_DIR/src/pi-agent/"
-  exec bash "$FETCH_DIR/src/pi-agent/setup.sh" "$@" </dev/tty
-fi
-
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/kio-agent"
 CONFIG_FILE="/etc/kio/kiosk.yaml"
 CONFIG_DIR="/etc/kio"
@@ -87,6 +73,12 @@ fix_owner() {
 
 DEV_API_URL="http://kio-dev.example.local"
 PRD_API_URL="https://api.kio.example.local"
+MQTT_HOST_DEFAULT="192.168.1.100"
+MQTT_PORT_DEFAULT="1883"
+# Cluster gateway that serves the kio API/UI hostnames. LAN nodes have no DNS for
+# these *.example.local names, so setup.sh writes static /etc/hosts entries for them.
+KIO_GATEWAY_IP="192.168.1.10"
+# These are overridden by values from /agent/config if the API provides them
 
 # ---------------------------------------------------------------------------
 # Parse args
@@ -98,12 +90,13 @@ API_TOKEN_ARG=""
 START_URL_ARG=""
 FEATURES_ARG=""
 CONFIG_FILE_ARG=""
+GATEWAY_IP_ARG=""
 CLEAR=0
 
 while [[ $# -gt 0 ]]; do
   opt="$1"
   case "$opt" in
-    --env|--api-url|--token|--start-url|--features|--config)
+    --env|--api-url|--token|--start-url|--features|--config|--gateway-ip)
       # Value-taking options: fail clearly if the value is missing (rather than a
       # cryptic "$2: unbound variable" under set -u).
       [[ $# -ge 2 ]] || { echo "Error: $opt requires a value"; exit 1; }
@@ -115,11 +108,50 @@ while [[ $# -gt 0 ]]; do
         --start-url)  START_URL_ARG="$val" ;;
         --features)   FEATURES_ARG="$val" ;;
         --config)     CONFIG_FILE_ARG="$val" ;;
+        --gateway-ip) GATEWAY_IP_ARG="$val" ;;
       esac ;;
     --clear) CLEAR=1; shift ;;
     *) echo "Unknown option: $opt"; exit 1 ;;
   esac
 done
+
+# Gateway IP: arg overrides the built-in default; the interactive first-install
+# path below prompts for it. Non-interactive paths (--config, existing config)
+# use the arg or the default without prompting.
+GATEWAY_IP="${GATEWAY_IP_ARG:-$KIO_GATEWAY_IP}"
+
+# Static /etc/hosts entries for the kio API/UI hostnames, pointed at the cluster
+# gateway. The agent must resolve its API hostname before it can talk to the API,
+# so these can't come from the agent's dynamic host sync — they live in their own
+# marker block, separate from the agent-managed (# kio-managed-*) block.
+#
+# Raspberry Pi OS images ship with cloud-init managing /etc/hosts: on every boot
+# it regenerates the file from /etc/cloud/templates/hosts.debian.tmpl, wiping
+# anything written directly to /etc/hosts. So we write the block to BOTH the live
+# file (immediate effect) and the template (survives the boot-time regeneration).
+# Idempotent on each run.
+write_kio_hosts() {
+  local tmpl="/etc/cloud/templates/hosts.debian.tmpl"
+  local block
+  block=$(cat <<EOF
+# kio-infra-start
+$GATEWAY_IP grafana.example.local
+$GATEWAY_IP kio.example.local api.kio.example.local
+$GATEWAY_IP kio-dev.example.local api.kio-dev.example.local
+$GATEWAY_IP stg.kio.example.local api.stg.kio.example.local
+# kio-infra-end
+EOF
+)
+  # Live file — takes effect immediately (until the next cloud-init regeneration).
+  sudo sed -i '/# kio-infra-start/,/# kio-infra-end/d' /etc/hosts
+  printf '%s\n' "$block" | sudo tee -a /etc/hosts > /dev/null
+  # cloud-init template — so the entries survive the boot-time /etc/hosts rebuild.
+  if [[ -f "$tmpl" ]]; then
+    sudo sed -i '/# kio-infra-start/,/# kio-infra-end/d' "$tmpl"
+    printf '%s\n' "$block" | sudo tee -a "$tmpl" > /dev/null
+  fi
+  echo "  Wrote kio API host entries to /etc/hosts + cloud-init template (gateway $GATEWAY_IP)"
+}
 
 # ---------------------------------------------------------------------------
 # --clear: remove stored env config and exit
@@ -256,6 +288,7 @@ elif [[ -f "$CONFIG_FILE" ]] && [[ -z "$API_TOKEN_ARG" ]]; then
   MQTT_HOST=$(yaml_get_nested mqtt host)
   MQTT_PORT=$(yaml_get_nested mqtt port)
   MQTT_PREFIX=$(yaml_get_nested mqtt topic_prefix)
+  write_kio_hosts  # so a hostname API_URL resolves for the reachability check below
   check_api_reachable "$API_URL"
 else
   # Determine default API URL from --env or --api-url
@@ -267,6 +300,13 @@ else
   elif [[ "$ENV" == "prd" ]]; then
     DEFAULT_URL="$PRD_API_URL"
   fi
+
+  # Prompt for the cluster gateway IP (used for the kio /etc/hosts entries), then
+  # write the host entries so a hostname-based API URL resolves for the check below.
+  echo ""
+  read -rp "Cluster gateway IP [$GATEWAY_IP]: " _gw
+  [[ -n "$_gw" ]] && GATEWAY_IP="$_gw"
+  write_kio_hosts
 
   # Always prompt for API URL, showing the default if one exists
   echo ""
@@ -319,16 +359,11 @@ if [[ -z "$CONFIG_FILE_ARG" ]]; then
   }
 
   KIOSK_ID=$(json_get kiosk_id)
-  MQTT_HOST=$(json_get mqtt_host)
-  MQTT_PORT=$(json_get mqtt_port)
-  [[ -z "$MQTT_HOST" ]] && echo "  API did not return MQTT host — check server configuration" && exit 1
-  [[ -z "$MQTT_PORT" ]] && echo "  API did not return MQTT port — check server configuration" && exit 1
-
-  MQTT_PREFIX_DEFAULT=$(json_get mqtt_topic_prefix)
-  echo ""
-  read -rp "MQTT topic prefix [${MQTT_PREFIX_DEFAULT}]: " _prefix
-  MQTT_PREFIX="${_prefix:-$MQTT_PREFIX_DEFAULT}"
-  [[ -z "$MQTT_PREFIX" ]] && echo "MQTT topic prefix is required" && exit 1
+  MQTT_PREFIX=$(json_get mqtt_topic_prefix)
+  API_MQTT_HOST=$(json_get mqtt_host)
+  API_MQTT_PORT=$(json_get mqtt_port)
+  [[ -z "$MQTT_HOST" ]] && MQTT_HOST="${API_MQTT_HOST:-$MQTT_HOST_DEFAULT}"
+  [[ -z "$MQTT_PORT" ]] && MQTT_PORT="${API_MQTT_PORT:-$MQTT_PORT_DEFAULT}"
 
   [[ -z "$KIOSK_ID" ]] && echo "  Could not determine kiosk ID from API response" && exit 1
 fi
@@ -351,7 +386,7 @@ echo ""
 # [1/5] System packages
 # ---------------------------------------------------------------------------
 
-sudo apt-get install -y -q ddcutil v4l-utils git unclutter-xfixes
+sudo apt-get install -y -q ddcutil v4l-utils git unclutter-xfixes wlr-randr
 sudo usermod -aG i2c "$TARGET_USER"
 
 # uv must belong to the kiosk user (the deploy/venv use $TARGET_HOME/.local/bin/uv).
@@ -360,7 +395,7 @@ if [[ ! -x "$UV_BIN" ]]; then
   run_as_user bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 fi
 
-echo "$TARGET_USER ALL=(ALL) NOPASSWD: /sbin/reboot, /usr/sbin/reboot, /usr/bin/cec-ctl, /opt/kio-agent/update-hosts, /opt/kio-agent/force-hdmi, /usr/bin/systemctl restart kio-agent, /bin/systemctl restart kio-agent" \
+echo "$TARGET_USER ALL=(ALL) NOPASSWD: /sbin/reboot, /usr/sbin/reboot, /usr/bin/cec-ctl, /opt/kio-agent/update-hosts, /opt/kio-agent/force-hdmi, /opt/kio-agent/set-resolution, /usr/bin/systemctl restart kio-agent, /bin/systemctl restart kio-agent" \
   | sudo tee /etc/sudoers.d/kio-agent > /dev/null
 sudo chmod 440 /etc/sudoers.d/kio-agent
 
@@ -422,6 +457,10 @@ if [[ -f "$CMDLINE" ]] && ! grep -q "video=HDMI-A-1:" "$CMDLINE"; then
   echo "  Added video=HDMI-A-1:1920x1080@60 to $CMDLINE (forces KMS to enable HDMI output)"
 fi
 
+# Write the kio API host entries (live file + cloud-init template). Safe to call
+# again here even if an earlier config-source branch already did — it's idempotent.
+write_kio_hosts
+
 # Save env-specific config so future --env switches don't need prompting
 if [[ -n "$ENV" ]]; then
   sudo cp /etc/kio/kiosk.yaml "$CONFIG_DIR/kiosk.$ENV.yaml"
@@ -437,8 +476,8 @@ sudo mkdir -p "$INSTALL_DIR"
 # Repair drifted ownership (e.g. a prior run as root left root-owned files/venv),
 # then do all file ops AS THE KIOSK USER so nothing ends up owned by root.
 fix_owner "$INSTALL_DIR"
-run_as_user cp "$SCRIPT_DIR/agent.py" "$SCRIPT_DIR/requirements.txt" "$SCRIPT_DIR/scripts/update-hosts" "$SCRIPT_DIR/scripts/browser-start" "$SCRIPT_DIR/scripts/force-hdmi" "$INSTALL_DIR/"
-run_as_user chmod +x "$INSTALL_DIR/update-hosts" "$INSTALL_DIR/browser-start" "$INSTALL_DIR/force-hdmi"
+run_as_user cp "$SCRIPT_DIR/agent.py" "$SCRIPT_DIR/requirements.txt" "$SCRIPT_DIR/scripts/update-hosts" "$SCRIPT_DIR/scripts/browser-start" "$SCRIPT_DIR/scripts/force-hdmi" "$SCRIPT_DIR/scripts/set-resolution" "$INSTALL_DIR/"
+run_as_user chmod +x "$INSTALL_DIR/update-hosts" "$INSTALL_DIR/browser-start" "$INSTALL_DIR/force-hdmi" "$INSTALL_DIR/set-resolution"
 [[ -f "$SCRIPT_DIR/VERSION" ]] && run_as_user cp "$SCRIPT_DIR/VERSION" "$INSTALL_DIR/"
 run_as_user rm -rf "$INSTALL_DIR/venv"
 run_as_user "$UV_BIN" venv --seed "$INSTALL_DIR/venv"

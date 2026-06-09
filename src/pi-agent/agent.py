@@ -838,6 +838,11 @@ def collect_hardware_info() -> dict:
         except Exception:
             pass
 
+    # Display modes (wlr-randr)
+    display_modes = _detect_display_modes()
+    if display_modes:
+        info["display_modes"] = display_modes
+
     logger.info("Hardware info collected: %s", list(info.keys()))
     return info
 
@@ -934,6 +939,24 @@ def _wayland_env() -> dict | None:
     return {**os.environ, "XDG_RUNTIME_DIR": f"/run/user/{uid}", "WAYLAND_DISPLAY": "wayland-0"}
 
 
+def _restart_browser() -> None:
+    """Kill Chromium (if running) and relaunch via browser-start with the Wayland env.
+
+    Called after the browser-flags file changes so the new flags take effect
+    without waiting for the next reboot.
+    """
+    env = _wayland_env()
+    if not env:
+        logger.warning("_restart_browser: no Wayland session — cannot relaunch Chromium")
+        return
+    running = subprocess.run(["pgrep", "-f", "chromium.*--kiosk"], capture_output=True)
+    if running.returncode == 0:
+        subprocess.run(["pkill", "-f", "chromium.*--kiosk"], check=False)
+        time.sleep(1)
+    subprocess.Popen(["/opt/kio-agent/browser-start"], env=env)
+    logger.info("Browser relaunched with updated flags")
+
+
 def _wlopm_outputs() -> list[str]:
     """Return output names known to the Wayland compositor via wlopm."""
     env = _wayland_env()
@@ -944,6 +967,74 @@ def _wlopm_outputs() -> list[str]:
         return [line.split()[0] for line in r.stdout.strip().splitlines() if line.strip()]
     except Exception:
         return []
+
+
+def _detect_display_modes() -> dict:
+    """Return available display modes per output.
+
+    Tries wlr-randr first (gives modes + refresh rates). Falls back to DRM
+    sysfs (/sys/class/drm/card*-*/modes) when wlr-randr is not installed or
+    the Wayland session is not yet running (e.g. early boot).
+
+    Returns dict like {"HDMI-A-1": [{"mode": "1920x1080", "rate": 60.0, "current": True}, ...]}
+    """
+    import re
+    env = _wayland_env()
+    if env is not None:
+        try:
+            r = subprocess.run(["wlr-randr"], capture_output=True, text=True, timeout=10, env=env)
+            if r.returncode == 0 and r.stdout.strip():
+                modes: dict = {}
+                current_output: str | None = None
+                for line in r.stdout.splitlines():
+                    if line and not line[0].isspace():
+                        current_output = line.split()[0]
+                        modes[current_output] = []
+                    elif current_output and line.strip():
+                        # wlr-randr format: "    1920x1080 px, 60.000000 Hz (current)"
+                        m = re.match(r'\s+(\d+x\d+)\s+px,\s+([\d.]+)\s+Hz(.*)', line)
+                        if m:
+                            mode_str, rate_str, flags = m.group(1), m.group(2), m.group(3)
+                            modes[current_output].append({
+                                "mode": mode_str,
+                                "rate": round(float(rate_str), 3),
+                                "current": "current" in flags,
+                                "preferred": "preferred" in flags,
+                            })
+                result = {k: v for k, v in modes.items() if v}
+                if result:
+                    return result
+        except Exception:
+            pass
+
+    # DRM sysfs fallback — no refresh rates, but always available
+    sysfs_modes: dict = {}
+    for modes_path in sorted(glob.glob("/sys/class/drm/card*-*/modes")):
+        try:
+            output_dir = os.path.dirname(modes_path)
+            status_path = os.path.join(output_dir, "status")
+            try:
+                status = open(status_path).read().strip()
+                if status != "connected":
+                    continue
+            except Exception:
+                pass
+            # Strip "card*-" prefix so names match wlr-randr output names (e.g. HDMI-A-1)
+            import re as _re
+            output_name = _re.sub(r'^card\d+-', '', os.path.basename(output_dir))
+            lines = open(modes_path).read().strip().splitlines()
+            seen: set[str] = set()
+            entry_list = []
+            for line in lines:
+                mode_str = line.strip()
+                if mode_str and mode_str not in seen:
+                    seen.add(mode_str)
+                    entry_list.append({"mode": mode_str, "rate": None, "current": False, "preferred": False})
+            if entry_list:
+                sysfs_modes[output_name] = entry_list
+        except Exception:
+            pass
+    return sysfs_modes
 
 
 def _wayland_display_power(on: bool) -> bool:
@@ -1209,6 +1300,24 @@ def handle_command(payload: bytes) -> None:
         elif command == "wake":
             _cec_power(True)
             logger.info("CEC wake sent")
+        elif command == "set_resolution":
+            output = cmd.get("output", "")
+            mode = cmd.get("mode", "")
+            rate = cmd.get("rate")
+            if not output or not mode:
+                _report_command("set_resolution", False, "Missing output or mode", command_id=command_id)
+                return
+            args = ["sudo", "/opt/kio-agent/set-resolution", output, mode]
+            if rate is not None:
+                args.append(str(rate))
+            logger.info("set_resolution: running %s", " ".join(args))
+            r = subprocess.run(args, capture_output=True, text=True, timeout=15)
+            if r.returncode != 0:
+                err = r.stderr.strip() or r.stdout.strip() or "set-resolution failed"
+                logger.warning("set_resolution failed (exit %d): %s", r.returncode, err)
+                _report_command("set_resolution", False, err, command_id=command_id)
+                return
+            logger.info("Resolution set: %s %s @ %s", output, mode, rate)
         elif command == "set_input":
             input_name = cmd.get("input", "")
             hex_val = INPUT_MAP.get(input_name)
@@ -1393,6 +1502,7 @@ class KioAgent:
                     with open(flags_file, "w") as f:
                         f.write(new_content)
                     logger.info("Browser flags updated: %s", flags)
+                    _restart_browser()
             else:
                 logger.warning("Failed to fetch browser flags: HTTP %s", resp.status_code)
         except PermissionError:
@@ -1619,6 +1729,20 @@ class KioAgent:
             "Applied settings from %s: heartbeat=%ds jitter=%ds metadata=%ds checkin=%ds",
             source, self._hb_interval, self._hb_jitter, self._metadata_interval, self._settings_checkin,
         )
+
+        res = s.get("display_resolution")
+        if res and isinstance(res, dict) and res.get("output") and res.get("mode"):
+            args = ["sudo", "/opt/kio-agent/set-resolution", res["output"], res["mode"]]
+            if res.get("rate") is not None:
+                args.append(str(res["rate"]))
+            try:
+                r = subprocess.run(args, capture_output=True, text=True, timeout=15)
+                if r.returncode == 0:
+                    logger.info("Applied stored display resolution: %s %s @ %s", res["output"], res["mode"], res.get("rate"))
+                else:
+                    logger.warning("Failed to apply stored display resolution: %s", r.stderr.strip())
+            except Exception as exc:
+                logger.warning("Failed to apply stored display resolution: %s", exc)
         if report:
             _report_command(
                 "apply_settings", True,

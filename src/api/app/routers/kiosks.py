@@ -435,6 +435,42 @@ async def set_input(
     await session.commit()
 
 
+class SetResolutionPayload(BaseModel):
+    output: str
+    mode: str
+    rate: float | None = None
+
+
+@router.post("/{kiosk_id}/set-resolution", status_code=204)
+async def set_resolution(
+    kiosk_id: uuid.UUID,
+    payload: SetResolutionPayload,
+    session: AsyncSession = Depends(get_session),
+):
+    kiosk = await kiosk_service.get_by_id(session, kiosk_id)
+    if kiosk is None:
+        raise HTTPException(status_code=404, detail="Kiosk not found")
+    subject = f"{payload.output} {payload.mode}"
+    if payload.rate is not None:
+        subject += f" @ {payload.rate} Hz"
+    dispatch_command(
+        session, kiosk_id, command="set_resolution", subject=subject,
+        payload={"command": "set_resolution", "output": payload.output,
+                 "mode": payload.mode, "rate": payload.rate},
+    )
+    # Persist the chosen resolution so the agent re-applies it after reboot
+    meta_value = {"output": payload.output, "mode": payload.mode, "rate": payload.rate}
+    result = await session.execute(
+        select(NodeMeta).where(NodeMeta.kiosk_id == kiosk_id, NodeMeta.key == "display_resolution")
+    )
+    row = result.scalar_one_or_none()
+    if row:
+        row.value = meta_value
+    else:
+        session.add(NodeMeta(id=uuid.uuid4(), kiosk_id=kiosk_id, key="display_resolution", value=meta_value))
+    await session.commit()
+
+
 # A command the agent hasn't acknowledged within this window is treated as
 # "no response" rather than perpetually "pending" — e.g. the agent was offline,
 # restarted mid-command, or never received it. Computed at read time so a late
