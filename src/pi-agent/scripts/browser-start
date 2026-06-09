@@ -11,6 +11,10 @@ with open('/etc/kio/kiosk.yaml') as f:
 
 # Core flags — always on
 CORE_FLAGS=(
+  # Force the Wayland backend. The kiosk runs a Wayland-only labwc session with no
+  # X server; without this, Chromium 148+ defaults to the X11 ozone backend, fails
+  # with "Missing X server or $DISPLAY", and exits immediately on launch.
+  --ozone-platform=wayland
   --password-store=basic
   --kiosk
   --remote-debugging-port=9222

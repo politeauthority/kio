@@ -1818,12 +1818,13 @@ class KioAgent:
         # Hardware state (ddcutil/CEC) is slow — only poll on the hourly metadata
         # heartbeat so routine 30s ticks stay fast and don't block tab/URL updates.
         payload: dict = {
-            "online":         online,
-            "agent_version":  AGENT_VERSION,
-            "boot_id":        BOOT_ID,
-            "current_url":    get_current_url() if online else None,
-            "browser_tabs":   _get_tabs() if online else [],
-            "playlist_state": self._player.current_state() if self._player is not None else None,
+            "online":             online,
+            "agent_version":      AGENT_VERSION,
+            "boot_id":            BOOT_ID,
+            "current_url":        get_current_url() if online else None,
+            "browser_tabs":       _get_tabs() if online else [],
+            "playlist_state":     self._player.current_state() if self._player is not None else None,
+            "reporting_api_url":  self.api_url,
         }
         if include_metadata or not online:
             payload["current_input"] = self._get_current_input() if online else None
