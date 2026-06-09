@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=alix
+User=pi
 WorkingDirectory=/opt/kio-agent
 ExecStartPre=/usr/bin/sudo /opt/kio-agent/force-hdmi
 ExecStart=/opt/kio-agent/venv/bin/python /opt/kio-agent/agent.py

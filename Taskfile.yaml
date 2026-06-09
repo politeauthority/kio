@@ -5,7 +5,7 @@ dotenv: [".env"]
 vars:
   # Override any of these in .env (copy .env.example → .env and fill in values)
   HARBOR:
-    sh: echo "${HARBOR:-your-registry.example.com/your-org}"
+    sh: bash -c '. .env 2>/dev/null; echo "${HARBOR:-your-registry.example.com/your-org}"'
   IMAGE: "{{.HARBOR}}/kio-api"
   IMAGE_UI: "{{.HARBOR}}/kio-ui"
   VERSION:
@@ -13,11 +13,11 @@ vars:
   # Pi nodes keep a git checkout of the repo here; deploys pull main then layer
   # the current local agent source on top before installing to /opt/kio-agent.
   KIO_REPO:
-    sh: echo "${KIO_REPO:-git@github.com:your-org/kio.git}"
+    sh: bash -c '. .env 2>/dev/null; echo "${KIO_REPO:-git@github.com:your-org/kio.git}"'
   KIO_DIR:
-    sh: echo "${KIO_DIR:-/home/pi/kio}"
+    sh: bash -c '. .env 2>/dev/null; echo "${KIO_DIR:-/home/pi/kio}"'
   MQTT_HOST:
-    sh: echo "${MQTT_HOST:-192.168.1.100}"
+    sh: bash -c '. .env 2>/dev/null; echo "${MQTT_HOST:-192.168.1.100}"'
 
 
 tasks:
