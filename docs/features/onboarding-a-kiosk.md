@@ -10,21 +10,16 @@ This doc covers adding a new Raspberry Pi to the kio setup from a fresh OS insta
 - Connected to the local network and reachable via SSH
 - SSH hostname configured (e.g. `kio-3`) or IP known
 - Display connected via HDMI
+- kio API reachable from the Pi (note the URL — setup will ask for it)
+- A kiosk created in the kio UI with a node token issued (setup will ask for the token)
 
-### Required system packages
-
-The setup scripts install these automatically, but if running manually:
+Before running setup, SSH into the Pi and update the OS:
 
 ```bash
-sudo apt-get install -y ddcutil v4l-utils
-sudo usermod -aG i2c $USER   # lets ddcutil run without sudo (re-login to apply)
+sudo apt-get update && sudo apt-get upgrade -y
 ```
 
-| Package | Provides | Used for |
-|---|---|---|
-| `ddcutil` | `ddcutil` | Display power (VCP D6), input switching (VCP 60) |
-| `v4l-utils` | `cec-ctl` | CEC standby/wake over HDMI |
-| *(pre-installed)* | `wlr-randr`, `wlopm` | Wayland output management |
+All other required packages are installed automatically by `setup.sh`.
 
 ---
 
@@ -51,76 +46,7 @@ Copy each token value when it's displayed — it won't be shown again.
 
 ---
 
-## Step 3 — Add node config files to the repo
-
-Node-specific files live in `configs/agents/` and are named with the node prefix so they can all share one directory. Config files containing secrets are gitignored.
-
-### `configs/agents/kio-3-kiosk.dev.yaml`
-
-Gitignored. Fill in the UUID and dev token from steps 1 and 2.
-
-```yaml
-id: <uuid from dashboard>
-features: []                    # list items: display_power, cec, input_switch
-
-api:
-  url: http://kio-dev.example.local
-  token: kio_...                # token created in the dev dashboard
-
-mqtt:
-  host: 192.168.1.100
-  port: 1883
-  topic_prefix: kio/dev
-```
-
-### `configs/agents/kio-3-kiosk.prd.yaml`
-
-Gitignored. Fill in the UUID and prod token from steps 1 and 2.
-
-```yaml
-id: <uuid from dashboard>
-features: []                    # list items: display_power, cec, input_switch
-
-api:
-  url: https://api.kio.example.local
-  token: kio_...                # token created in the prod dashboard
-  tls_verify: false
-
-mqtt:
-  host: 192.168.1.100
-  port: 1883
-  topic_prefix: kio/prd
-```
-
-### `configs/agents/kio-3-kanshi-config`
-
-Committed. Configures monitor output for this specific display. Find the exact output name by SSHing into the Pi and running:
-
-```bash
-WAYLAND_DISPLAY=wayland-0 wlr-randr
-```
-
-Then write the kanshi profile:
-
-```
-profile kiosk {
-    output "Dell Inc. DELL S2721QS XXXXXXX" mode 1920x1080@60Hz position 0,0
-}
-```
-
-### `configs/agents/kio-3-hosts`
-
-Committed. Appended to `/etc/hosts` on the Pi for local DNS resolution.
-
-```
-# KIO-HOSTS
-192.168.1.10 kio-dev.example.local kio.example.local api.kio-dev.example.local api.kio.example.local
-# END KIO-HOSTS
-```
-
----
-
-## Step 4 — Add deploy tasks to the Taskfile
+## Step 3 — Add deploy tasks to the Taskfile (optional)
 
 Add tasks to `Taskfile.yml` modelled on the existing `kio-2` tasks. The deploy task scps agent code and node-specific configs directly to their target locations.
 
@@ -167,15 +93,25 @@ Add tasks to `Taskfile.yml` modelled on the existing `kio-2` tasks. The deploy t
 
 ## Step 5 — Run setup on the Pi
 
-SSH into the Pi, copy the `pi-agent` directory over, and run the setup script:
+SSH into the Pi and run the setup script directly from GitHub:
 
 ```bash
-ssh kio-3
-cd ~/kio/pi-agent
-bash setup.sh --env dev --token kio_...
+curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/bootstrap/src/pi-agent/setup.sh | bash -s -- --env dev
 ```
 
-The script installs system packages, writes `/etc/kio/kiosk.yaml`, installs the agent to `/opt/kio-agent/`, enables the systemd service, and configures auto-login.
+The script will prompt for:
+- **Cluster gateway IP** — the IP of the host serving the kio API/UI hostnames (written to `/etc/hosts` so they resolve)
+- **API URL** — pre-filled from `--env dev` or `--env prd`; press Enter to accept
+- **Node token** — paste the token from Step 2
+
+Or pass everything non-interactively:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/bootstrap/src/pi-agent/setup.sh \
+  | bash -s -- --env dev --gateway-ip 192.168.1.10 --token kio_...
+```
+
+The script fetches the full source tree, installs system packages, writes `/etc/kio/kiosk.yaml` (config pulled from the API via the token), installs the agent to `/opt/kio-agent/`, enables the systemd service, and configures auto-login.
 
 **Reboot to apply all changes** (required for the `i2c` group to take effect):
 

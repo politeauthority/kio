@@ -238,6 +238,16 @@ tasks:
       - ssh {{.HOST}} "sudo systemctl restart kio-agent"
       - echo "{{.HOST}} -> {{.CONFIG}}"
 
+  _kio:sync:
+    internal: true
+    desc: Copy local pi-agent source to the node, push config, restart agent
+    cmds:
+      - scp src/pi-agent/agent.py src/pi-agent/requirements.txt {{.HOST}}:/opt/kio-agent/
+      - scp -r src/pi-agent/scripts/. {{.HOST}}:/opt/kio-agent/
+      - scp {{.CONFIG}} {{.HOST}}:/etc/kio/kiosk.yaml
+      - ssh {{.HOST}} "sudo systemctl restart kio-agent"
+      - echo "{{.HOST}} -> synced agent + {{.CONFIG}}"
+
   _kio:logs:
     internal: true
     cmds:
@@ -257,9 +267,9 @@ tasks:
       - scp configs/agents/kio-2-kanshi-config kio-2:/home/pi/.config/kanshi/config
 
   kio-2:dev:
-    desc: Push dev config to kio-2 and restart the agent
+    desc: Sync pi-agent code to kio-2, push dev config, restart agent
     cmds:
-      - task: _kio:config
+      - task: _kio:sync
         vars: {HOST: kio-2, CONFIG: configs/agents/kio-2-kiosk.dev.yaml}
 
   kio-2:prd:

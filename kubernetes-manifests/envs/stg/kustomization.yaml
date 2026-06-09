@@ -3,9 +3,9 @@ kind: Kustomization
 namespace: kio-stg
 images:
 - name: harbor.squid-ink.us/politeauthority/kio-api
-  newTag: stg-main
+  newTag: stg-bootstrap
 - name: harbor.squid-ink.us/politeauthority/kio-ui
-  newTag: stg-main
+  newTag: stg-bootstrap
 resources:
 - ../../base
 - ./httproute.yaml

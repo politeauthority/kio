@@ -319,11 +319,16 @@ if [[ -z "$CONFIG_FILE_ARG" ]]; then
   }
 
   KIOSK_ID=$(json_get kiosk_id)
-  MQTT_PREFIX=$(json_get mqtt_topic_prefix)
   MQTT_HOST=$(json_get mqtt_host)
   MQTT_PORT=$(json_get mqtt_port)
   [[ -z "$MQTT_HOST" ]] && echo "  API did not return MQTT host — check server configuration" && exit 1
   [[ -z "$MQTT_PORT" ]] && echo "  API did not return MQTT port — check server configuration" && exit 1
+
+  MQTT_PREFIX_DEFAULT=$(json_get mqtt_topic_prefix)
+  echo ""
+  read -rp "MQTT topic prefix [${MQTT_PREFIX_DEFAULT}]: " _prefix
+  MQTT_PREFIX="${_prefix:-$MQTT_PREFIX_DEFAULT}"
+  [[ -z "$MQTT_PREFIX" ]] && echo "MQTT topic prefix is required" && exit 1
 
   [[ -z "$KIOSK_ID" ]] && echo "  Could not determine kiosk ID from API response" && exit 1
 fi
