@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_session
 from app.models.certificate import Certificate
 from app.models.kiosk import Kiosk
-from app.mqtt import publish_command
+from app.routers.kiosks import dispatch_command
 from app.schemas.certificate import CertificateCreate, CertificateRead
 
 router = APIRouter(prefix="/settings/certificates", tags=["certificates"])
@@ -39,7 +39,10 @@ async def delete_certificate(cert_id: uuid.UUID, session: AsyncSession = Depends
 
 @router.post("/sync", status_code=204)
 async def sync_certs_to_all_kiosks(session: AsyncSession = Depends(get_session)):
-    """Send sync_certs command to all online kiosks."""
+    """Send sync_certs command to all online kiosks, recording one event-log row
+    per kiosk so the result (success or error) is auditable. dispatch_command tags
+    each command with a CommandLog id that the agent echoes back when it acks."""
     kiosks = await session.execute(select(Kiosk).where(Kiosk.status == "online"))
     for kiosk in kiosks.scalars().all():
-        publish_command(str(kiosk.id), {"command": "sync_certs"})
+        dispatch_command(session, kiosk.id, command="sync_certs", payload={"command": "sync_certs"})
+    await session.commit()

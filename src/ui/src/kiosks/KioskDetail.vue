@@ -109,7 +109,8 @@
           <hr style="border-color: var(--border); margin: 1rem 0" />
         </template>
 
-        <form @submit.prevent="sendNav" style="display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 0.5rem">
+        <!-- Navigate to URL — temporarily hidden -->
+        <!-- <form @submit.prevent="sendNav" style="display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 0.5rem">
           <div style="flex: 1">
             <label class="form-label">Navigate to URL</label>
             <UrlTypeahead v-model="urlInput" placeholder="https://example.com" :required="true" />
@@ -120,12 +121,13 @@
           ⚠ A playlist is running — navigating to a URL or focusing a tab will stop it.
         </p>
 
-        <hr style="border-color: var(--border); margin: 1rem 0" />
+        <hr style="border-color: var(--border); margin: 1rem 0" /> -->
 
-        <div class="text-xs text-muted" style="margin-bottom: 0.5rem">PAGE CONTROL</div>
+        <!-- Page control — temporarily hidden -->
+        <!-- <div class="text-xs text-muted" style="margin-bottom: 0.5rem">PAGE CONTROL</div>
         <button class="btn btn-secondary" :disabled="commandsBlocked" @click="sendCommand('reload')">↺ Reload</button>
 
-        <hr style="border-color: var(--border); margin: 1rem 0" />
+        <hr style="border-color: var(--border); margin: 1rem 0" /> -->
 
         <div class="text-xs text-muted" style="margin-bottom: 0.5rem">SYSTEM</div>
         <button class="btn btn-danger" :disabled="commandsBlocked" @click="showRebootModal = true">Reboot</button>

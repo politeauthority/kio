@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_session
 from app.deps import get_node_kiosk
+from app.models.app_setting import AppSetting
 from app.models.command_log import CommandLog
 from app.models.hardware_detect_log import HardwareDetectLog
 from app.models.kiosk import Kiosk
@@ -172,8 +173,22 @@ async def get_agent_settings(
 @router.get("/meta")
 async def get_meta(
     kiosk: Kiosk = Depends(get_node_kiosk),
+    session: AsyncSession = Depends(get_session),
 ) -> dict:
-    return kiosk.meta
+    # Global host mappings (set on the global Hosts settings page) apply to every
+    # node. Merge them ahead of any per-kiosk extra_hosts so the agent's _sync_hosts
+    # receives both — without this the agent only sees per-kiosk meta and global
+    # mappings never reach any node.
+    meta = dict(kiosk.meta)
+    row = await session.get(AppSetting, "global_extra_hosts")
+    global_hosts = row.value if row and row.value else []
+    if global_hosts:
+        merged = list(global_hosts)
+        for h in meta.get("extra_hosts") or []:
+            if h not in merged:
+                merged.append(h)
+        meta["extra_hosts"] = merged
+    return meta
 
 
 class AgentMetaPayload(BaseModel):

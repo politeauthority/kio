@@ -2,10 +2,13 @@
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models.app_setting import AppSetting
+from app.models.kiosk import Kiosk
+from app.mqtt import publish_command
 
 router = APIRouter(prefix="/settings/node", tags=["settings"])
 
@@ -44,6 +47,14 @@ async def get_global_hosts(session: AsyncSession = Depends(get_session)) -> dict
 @router.put("/hosts")
 async def set_global_hosts(body: HostsPayload, session: AsyncSession = Depends(get_session)) -> dict:
     await _set_json_setting(session, _HOSTS_KEY, body.hosts)
+    # Global hosts apply to every node — push sync_hosts so online kiosks apply the
+    # change immediately. Offline kiosks pick it up via _sync_hosts on next restart.
+    kiosks = await session.execute(select(Kiosk).where(Kiosk.status == "online"))
+    for kiosk in kiosks.scalars().all():
+        try:
+            publish_command(str(kiosk.id), {"command": "sync_hosts"})
+        except Exception:
+            pass  # MQTT unavailable — agent applies on next restart/checkin
     return {"hosts": body.hosts}
 
 

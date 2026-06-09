@@ -1411,9 +1411,13 @@ def handle_command(payload: bytes) -> None:
                 logger.warning("sync_browser_flags: agent not ready")
         elif command == "sync_certs":
             if _agent:
-                _agent._sync_certs()
+                # Reports its own success/error event (incl. malformed-cert detection),
+                # so return here rather than falling through to the generic ack below.
+                _agent._sync_certs(command_id=command_id)
             else:
                 logger.warning("sync_certs: agent not ready")
+                _report_command("sync_certs", False, "agent not ready", command_id=command_id)
+            return
         elif command == "sync_hosts":
             if _agent:
                 _agent._sync_hosts()
@@ -1615,7 +1619,7 @@ class KioAgent:
 
     # --- HTTP heartbeat ---
 
-    def _sync_certs(self) -> None:
+    def _sync_certs(self, command_id: str | None = None) -> None:
         import glob
         import re
         try:
@@ -1626,30 +1630,54 @@ class KioAgent:
                 verify=TLS_VERIFY,
             )
             if resp.status_code != 200:
-                logger.warning("Failed to fetch certs: HTTP %s", resp.status_code)
+                msg = f"Failed to fetch certs: HTTP {resp.status_code}"
+                logger.warning(msg)
+                _report_command("sync_certs", False, msg, command_id=command_id)
                 return
             certs = resp.json()
             cert_dir = "/etc/kio/certs"
             os.makedirs(cert_dir, exist_ok=True)
             for f in glob.glob(f"{cert_dir}/*.crt"):
                 os.remove(f)
+            # Validate each PEM before installing — update-ca-certificates silently
+            # skips undecodable certs and still exits 0, so a bad paste would otherwise
+            # report a false success. Surface the bad ones as an event-log error.
+            invalid = []
             for cert in certs:
                 safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", cert["name"])
-                with open(f"{cert_dir}/{safe_name}.crt", "w") as f:
+                path = f"{cert_dir}/{safe_name}.crt"
+                with open(path, "w") as f:
                     f.write(cert["content"])
+                check = subprocess.run(
+                    ["openssl", "x509", "-noout", "-in", path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if check.returncode != 0:
+                    invalid.append(cert["name"])
+                    os.remove(path)  # don't hand a malformed file to update-ca-certificates
             result = subprocess.run(
                 ["sudo", "/opt/kio-agent/update-certs"],
                 capture_output=True, text=True, timeout=30,
             )
-            if result.returncode == 0:
-                logger.info("Certs synced: %d installed", len(certs))
+            installed = len(certs) - len(invalid)
+            if result.returncode != 0:
+                err = result.stderr.strip() or "update-certs failed"
+                logger.warning("update-certs failed: %s", err)
+                _report_command("sync_certs", False, err, command_id=command_id)
+            elif invalid:
+                msg = f"{installed} installed; {len(invalid)} failed to parse: {', '.join(invalid)}"
+                logger.warning("Cert sync partial: %s", msg)
+                _report_command("sync_certs", False, msg, command_id=command_id)
             else:
-                logger.warning("update-certs failed: %s", result.stderr.strip())
+                logger.info("Certs synced: %d installed", installed)
+                _report_command("sync_certs", True, f"{installed} installed", command_id=command_id)
         except PermissionError as exc:
             logger.warning("Permission denied writing certs: %s", exc)
             _report_file_error("/etc/kio/certs")
+            _report_command("sync_certs", False, f"permission denied: {exc}", command_id=command_id)
         except Exception as exc:
             logger.warning("Cert sync failed: %s", exc)
+            _report_command("sync_certs", False, str(exc), command_id=command_id)
 
     def _sync_hosts(self) -> None:
         try:
