@@ -94,6 +94,11 @@ if [[ -z "${KIO_BOOTSTRAPPED:-}" && ( -z "$SCRIPT_DIR" || ! -f "$SCRIPT_DIR/agen
   fi
   _boot="$(mktemp -d)"
   git clone --depth 1 --branch "$KIO_BRANCH" "$KIO_REPO" "$_boot/kio"
+  # When invoked via `sudo bash`, mktemp -d created this dir as root:root mode 700,
+  # but the agent files are copied later as the kiosk user (run_as_user). Make the
+  # checkout traversable/readable by everyone so that copy can read it. It holds only
+  # public repo source at this point, so world-read is fine.
+  chmod -R a+rX "$_boot"
   export KIO_BOOTSTRAPPED=1
   if [[ -e /dev/tty ]]; then
     exec bash "$_boot/kio/src/pi-agent/setup.sh" "$@" </dev/tty

@@ -25,91 +25,35 @@ All other required packages are installed automatically by `setup.sh`.
 
 ## Step 1 — Create the kiosk in the dashboard
 
-Open the kio dashboard and create the kiosk:
+Open the kio dashboard, click **+ Add Kiosk**, and fill in:
 
-- **Dev:** `http://kio-dev.example.local`
-- **Prod:** `http://kio.example.local`
-
-Click **+ Add Kiosk**, fill in:
 - **Name** — human-readable label (e.g. `Lobby Display`)
 - **Hostname** — the Pi's SSH hostname (e.g. `kio-3`)
 
-Copy the kiosk **UUID** from the dashboard — you'll need it in the config files.
+Copy the kiosk **UUID** from the dashboard — you'll need it if you ever edit the config by hand.
 
 ---
 
-## Step 2 — Create node tokens
+## Step 2 — Create a node token
 
-On the kiosk detail page, open the **Node Tokens** section and create two tokens — one for dev, one for prod. Give each a description so you can tell them apart (`kio-3 dev`, `kio-3 prd`).
+On the kiosk detail page, open the **Node Tokens** section and create a token. Give it a description so you can identify it later (e.g. `kio-3`).
 
-Copy each token value when it's displayed — it won't be shown again.
-
----
-
-## Step 3 — Add deploy tasks to the Taskfile (optional)
-
-Add tasks to `Taskfile.yaml` modelled on the existing `kio-2`/`kio-3` tasks. They delegate to the shared, variabilized `_kio:*` tasks, so you only set the hostname and which config file to push:
-
-```yaml
-  kio-3:setup:
-    desc: First-time setup of kio-3 — install with the dev config
-    cmds:
-      - task: _kio:install
-        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.dev.yaml}
-
-  kio-3:deploy:
-    desc: Deploy kio-3 — scp local source, run setup.sh (keeps config), restart
-    cmds:
-      - task: _kio:install
-        vars: {HOST: kio-3}
-
-  kio-3:dev:
-    desc: Push dev config to kio-3 and restart the agent
-    cmds:
-      - task: _kio:config
-        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.dev.yaml}
-
-  kio-3:prd:
-    desc: Push prod config to kio-3 and restart the agent
-    cmds:
-      - task: _kio:config
-        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.prd.yaml}
-
-  kio-3:logs:
-    desc: Stream agent logs from kio-3
-    cmds:
-      - task: _kio:logs
-        vars: {HOST: kio-3}
-```
-
-`_kio:install` SCPs `src/pi-agent/.` to the node and runs `setup.sh --local` (never pulls from git).
+Copy the token value when it's displayed — it won't be shown again.
 
 ---
 
-## Step 5 — Run setup on the Pi
+## Step 3 — Run setup on the Pi
 
-The simplest path is the Taskfile (after Step 3 and creating `configs/agents/kio-3-kiosk.dev.yaml`):
+Bootstrap the agent straight from GitHub with a single command — it downloads `setup.sh` (defaults to the `main` branch), then installs and configures everything:
 
 ```bash
-task kio-3:setup
-```
-
-Or run `setup.sh` on the Pi directly. SSH in, then either copy the `src/pi-agent/` folder over and run it with `--local`, or pull it from GitHub:
-
-```bash
-# from copied source (recommended — no internet needed):
-cd /path/to/src/pi-agent && sudo bash setup.sh --local --api-url https://<your-api> --token kio_...
-
-# or bootstrap from GitHub (clones the repo, defaults to the main branch):
 curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/main/src/pi-agent/setup.sh \
-  | sudo bash -s -- --api-url https://<your-api> --token kio_...
+  | bash -s -- --api-url https://<your-api> --token kio_...
 ```
 
-If you don't pass `--api-url`/`--token`, the script prompts for them (only those two). See [API certificate (TLS) options](#api-certificate-tls-options) below for the cert flag to add (`--accept-cert` is typical for a private cert).
+Run it as the kiosk user (not with `sudo`) — `setup.sh` calls `sudo` internally only for the steps that need root, and installs the agent under your user. If you don't pass `--api-url`/`--token`, the script prompts for them (only those two). See [API certificate (TLS) options](#api-certificate-tls-options) below for the cert flag to add (`--accept-cert` is typical for a private cert).
 
-> `--env dev` / `--env prd` is optional: it tags the installed config as that environment (saved on the Pi as `/etc/kio/kiosk.<env>.yaml`) so you can switch between them later with `task <node>:dev` / `task <node>:prd`. It does **not** pre-fill the API URL.
-
-The script installs system packages, writes `/etc/kio/kiosk.yaml`, installs the agent to `/opt/kio-agent/`, enables the systemd service, configures the labwc graphical autostart, and turns on auto-login.
+The script installs system packages, writes `/etc/kio/kiosk.yaml`, installs the agent to `/opt/kio-agent/`, enables the `kio-agent` systemd service, configures the labwc graphical autostart, and turns on auto-login.
 
 **Reboot to apply all changes:**
 
@@ -135,12 +79,11 @@ If your kio API is served over HTTPS, the Pi has to trust the API's certificate 
 Most self-hosted setups use a private certificate — use **`--accept-cert`**. During setup it downloads the API's certificate, saves it on the Pi, and prints a **fingerprint** (a `Leaf SHA-256:` line). Compare that fingerprint against your API's real certificate before continuing — that confirms nothing tampered with the connection. From then on the agent trusts only that exact certificate.
 
 ```bash
-sudo bash setup.sh --accept-cert --api-url https://your-api.example.local --token kio_...
+curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/main/src/pi-agent/setup.sh \
+  | bash -s -- --accept-cert --api-url https://your-api.example.local --token kio_...
 ```
 
 > **"Reachable but its TLS certificate is not trusted"** — if setup stops with this message, it's this step. Re-run with one of the options above.
-
-If you'd rather not have setup download its source from the internet, copy the `src/pi-agent/` folder to the Pi yourself and add `--local` — setup then runs only from those files and never touches git.
 
 ---
 
@@ -149,8 +92,9 @@ If you'd rather not have setup download its source from the internet, copy the `
 If your API URL is an internal name like `https://api.kio.example.local` (rather than a public domain), the Pi needs a DNS server that knows that name — otherwise setup fails to resolve/reach the API. Point the Pi at a DNS server that can resolve it (for example a **Pi-hole**) with `--dns`:
 
 ```bash
-sudo bash setup.sh --dns 192.168.50.2 --accept-cert \
-  --api-url https://api.kio.example.local --token kio_...
+curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/main/src/pi-agent/setup.sh \
+  | bash -s -- --dns 192.168.50.2 --accept-cert \
+    --api-url https://api.kio.example.local --token kio_...
 ```
 
 - Comma-separate multiple servers: `--dns 192.168.50.2,1.1.1.1`.
@@ -161,7 +105,7 @@ If your API URL is a plain IP address (e.g. `http://192.168.50.182:8000`), you d
 
 ---
 
-## Step 6 — Detect capabilities
+## Step 4 — Detect capabilities
 
 Open the kiosk edit page in the dashboard and click **Detect Capabilities**. This sends a command to the agent which probes the hardware and reports back what it finds:
 
@@ -177,10 +121,12 @@ If no capabilities are detected, check that the `i2c` group change from the rebo
 
 ---
 
-## Step 8 — Verify
+## Step 5 — Verify
+
+Stream the agent logs from the Pi:
 
 ```bash
-task kio-3:logs
+ssh kio-3 "journalctl -fu kio-agent"
 ```
 
 You should see:
@@ -195,7 +141,7 @@ Check the dashboard — the kiosk should show as **online** with its current URL
 
 ---
 
-## Step 9 — Set browser flags (optional)
+## Step 6 — Set browser flags (optional)
 
 The kiosk starts with default Chromium flags. To customise them, go to the kiosk detail page in the dashboard and adjust the **Browser Flags** section. Changes take effect after the next reboot.
 
@@ -208,15 +154,13 @@ Default flags applied:
 
 ---
 
-## Node config file reference
+## Node config reference
 
-Config files live in `configs/agents/` (not committed — they contain node tokens):
+After setup the agent's config lives on the Pi at `/etc/kio/kiosk.yaml` (API URL, token, MQTT settings, detected features). Inspect it with:
 
-| File | Purpose |
-|---|---|
-| `kio-3-kiosk.dev.yaml` | API URL, token, MQTT settings for dev |
-| `kio-3-kiosk.prd.yaml` | API URL, token, MQTT settings for prod |
-| `example-config.yaml` | Template to copy when adding a new node |
+```bash
+ssh kio-3 "cat /etc/kio/kiosk.yaml"
+```
 
 ---
 
@@ -224,21 +168,24 @@ Config files live in `configs/agents/` (not committed — they contain node toke
 
 **Agent not starting:**
 ```bash
-task kio-3:logs
+ssh kio-3 "systemctl status kio-agent"
+ssh kio-3 "journalctl -fu kio-agent"
 ```
 
 **Heartbeat failing (token invalid):**
-Verify the token in `configs/agents/kio-3-kiosk.dev.yaml` matches what was created in the dashboard. Tokens are shown only once — if lost, revoke it and create a new one.
+Verify the token in `/etc/kio/kiosk.yaml` matches what was created in the dashboard. Tokens are shown only once — if lost, revoke it and create a new one, then re-run setup (or edit the file and `sudo systemctl restart kio-agent`).
 
 **MQTT not connecting:**
-Check `topic_prefix` in `kio-3-kiosk.dev.yaml` is `kio/dev`. Confirm the broker (the `mqtt.host`/`mqtt.port` in your config) is reachable from the Pi:
+Confirm the broker (the `mqtt.host`/`mqtt.port` in your config) is reachable from the Pi:
 ```bash
 ssh kio-3 "nc -zv <mqtt-host> 1883"
 ```
 
-**Wrong config active:**
-Check what's currently on the Pi:
+**Check / change the active config:**
 ```bash
 ssh kio-3 "cat /etc/kio/kiosk.yaml"
 ```
-Push the correct config with `task kio-3:dev` or `task kio-3:prd`.
+Edit it on the Pi and restart the agent to apply:
+```bash
+ssh kio-3 "sudo systemctl restart kio-agent"
+```
