@@ -37,6 +37,38 @@ Bump before releasing. The release tasks read the version from `VERSION` automat
 
 ---
 
+## Build numbers
+
+Alongside the semver, kio keeps a monotonic **build number** in a `BUILD` file at the
+repo root. It distinguishes repeated builds of the same branch or version — e.g. two
+staging builds off `sec`, or a rebuild of `0.1.0` — and lets you identify exactly which
+build is running anywhere.
+
+```bash
+task version       # show "v{VERSION}+build.{BUILD}", e.g. v0.1.0+build.42
+task bump:build    # increment the build number (run automatically by release-*)
+```
+
+Every `release-dev` / `release-stg` / `release-prd` runs `bump:build` as its **first
+step**, so the API and UI built in one release share the same number. The number shows
+up in two places, in two formats (Docker tags can't contain `+`):
+
+| Surface | Format | Example |
+|---|---|---|
+| `KIO_VERSION` — reported by the live app at `GET /_version` and on the About page | `<base>+build.N` | `0.1.0+build.42` (prod), `sec+build.42` (staging) |
+| Immutable image tag in Harbor | `<rolling-tag>-build.N` | `kio-api:0.1.0-build.42`, `kio-api:stg-sec-build.42` |
+
+Each build is pushed under **two tags**: the rolling tag the kustomize overlay points at
+(`dev-latest` / `stg-<branch>` / `<semver>`) **and** the immutable `-build.N` tag, so
+every build is preserved for rollback and audit while the overlay keeps tracking the
+rolling tag.
+
+`release-prd` commits the bumped `BUILD` (via `git-tag`) so production build numbers
+persist in git. Staging builds bump the counter locally between releases; because it's a
+file counter, the number can drift if you build the same branch from multiple machines.
+
+---
+
 ## Releasing to production
 
 ### Full release (recommended)
@@ -49,14 +81,15 @@ git push origin main --tags
 
 `release-prd` runs these steps in order:
 
-1. **`build-prd`** — builds `kio-api:{VERSION}` for `linux/amd64`
-2. **`build-ui-prd`** — builds `kio-ui:{VERSION}` for `linux/amd64`
-3. **`push-prd`** — pushes API image to Harbor
-4. **`push-ui-prd`** — pushes UI image to Harbor
-5. **`stamp-prd`** — runs `kustomize edit set image` to write the version into `kubernetes-manifests/envs/prd/kustomization.yaml`
-6. **`apply-prd`** — `kubectl apply -k kubernetes-manifests/envs/prd/`
-7. **`rollout-prd`** — waits for the `kio-api` and `kio-ui` deployments to finish rolling out
-8. **`git-tag`** — commits `VERSION` + `kustomization.yaml` and tags the commit `v{VERSION}`
+1. **`bump:build`** — increments the `BUILD` number so this release is uniquely identifiable
+2. **`stamp-prd`** — runs `kustomize edit set image` to write the version into `kubernetes-manifests/envs/prd/kustomization.yaml`
+3. **`build-prd`** — builds `kio-api`, tagged `{VERSION}` (rolling) and `{VERSION}-build.{BUILD}` (immutable), with `KIO_VERSION={VERSION}+build.{BUILD}`
+4. **`push-prd`** — pushes both API tags to Harbor
+5. **`build-ui-prd`** — builds `kio-ui`, tagged `{VERSION}` and `{VERSION}-build.{BUILD}`
+6. **`push-ui-prd`** — pushes both UI tags to Harbor
+7. **`apply-prd`** — `kubectl apply -k kubernetes-manifests/envs/prd/`
+8. **`rollout-prd`** — waits for the `kio-api` and `kio-ui` deployments to finish rolling out
+9. **`git-tag`** — commits `VERSION` + `BUILD` + `kustomization.yaml` and tags the commit `v{VERSION}`
 
 After the task completes, push the commit and tag:
 
@@ -211,9 +244,11 @@ These only update the config — they do not re-copy agent files. Use them for q
 
 ## Harbor images
 
-All images live at `your-registry.example.com/your-org/`.
+All images live at `your-registry.example.com/your-org/`. Every build is pushed under a
+rolling tag (left) and an immutable `-build.N` tag (right), so the overlay can track the
+rolling tag while every individual build stays available for rollback.
 
-| Image | Dev tag | Prod tags |
+| Image | Rolling tag (dev / stg / prod) | Immutable per-build tag |
 |---|---|---|
-| `kio-api` | `dev-latest` | `0.1.0`, `0.2.0`, … |
-| `kio-ui` | `dev-latest` | `0.1.0`, `0.2.0`, … |
+| `kio-api` | `dev-latest` / `stg-<branch>` / `0.1.0` | `dev-build.N` / `stg-<branch>-build.N` / `0.1.0-build.N` |
+| `kio-ui` | `dev-latest` / `stg-<branch>` / `0.1.0` | `dev-build.N` / `stg-<branch>-build.N` / `0.1.0-build.N` |

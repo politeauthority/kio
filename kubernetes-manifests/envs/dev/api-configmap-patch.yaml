@@ -4,3 +4,4 @@ metadata:
   name: kio-api-config
 data:
   LOG_LEVEL: "INFO"
+  DOCS_ENABLED: "true"

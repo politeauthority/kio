@@ -109,6 +109,11 @@ code {
   text-transform: uppercase;
 }
 
+.env-banner-local {
+  background: #16a34a;
+  color: #fff;
+}
+
 .env-banner-branch {
   font-size: 0.75rem;
   background: rgba(0, 0, 0, 0.15);
@@ -381,6 +386,24 @@ code {
   padding: var(--space-lg);
 }
 
+/* Two-column masonry for the kiosk edit page — packs the variable-height
+   cards into half-width columns instead of one full-width stack. */
+.edit-grid {
+  column-count: 2;
+  column-gap: var(--space-lg);
+}
+
+.edit-grid > .card {
+  break-inside: avoid;
+  margin: 0 0 var(--space-lg);
+}
+
+@media (max-width: 1100px) {
+  .edit-grid {
+    column-count: 1;
+  }
+}
+
 .card-header {
   font-size: 0.78rem;
   font-weight: 600;
@@ -538,6 +561,23 @@ code {
     transform: scale(1.25);
     text-shadow: 0 0 6px var(--success), 0 0 14px var(--success);
   }
+}
+
+/* Lightweight inline loading spinner (Bootstrap's CSS isn't bundled, so we can't
+   rely on .spinner-border). Size via width/height; defaults suit inline text. */
+.kio-spinner {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: kio-spin 0.7s linear infinite;
+}
+
+@keyframes kio-spin {
+  to { transform: rotate(360deg); }
 }
 
 .status-offline { color: var(--danger); }

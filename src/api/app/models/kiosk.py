@@ -32,6 +32,10 @@ class Kiosk(Base):
     display_on: Mapped[bool | None] = mapped_column(nullable=True)
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_boot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # System uptime the node last reported (metadata heartbeat) and when it arrived,
+    # so the dashboard can extrapolate the live uptime while the node stays online.
+    uptime_seconds: Mapped[int | None] = mapped_column(nullable=True)
+    uptime_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reporting_api_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     playlist_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("playlists.id", ondelete="SET NULL"), nullable=True

@@ -33,34 +33,55 @@ tasks:
       - kubectl get secret harbor-registry -n kio-stg --ignore-not-found | grep -q harbor-registry || kubectl get secret harbor-registry -n kio-dev -o json | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.metadata.namespace)' | kubectl apply -n kio-stg -f -
       - kubectl apply -k kubernetes-manifests/envs/stg/
 
+  # Every build is tagged twice: a rolling tag the kustomize overlays point at
+  # (dev-latest / stg-<branch> / <semver>) plus an immutable per-build tag suffixed
+  # with the BUILD number, so every build is preserved in Harbor. KIO_VERSION carries
+  # the SemVer build metadata (+build.N) and is reported by the live app at /_version.
   build-dev:
     desc: Build the kio-api image tagged dev-latest (linux/amd64)
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 --build-arg VERSION=dev-latest -f docker/Dockerfile.api -t {{.IMAGE}}:dev-latest .
+      - docker buildx build --platform linux/amd64 --target production --build-arg VERSION=dev-latest+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:dev-latest -t {{.IMAGE}}:dev-build.{{.BUILD}} .
 
   build-prd:
     desc: Build the kio-api image tagged with the current version (linux/amd64)
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 --build-arg VERSION={{.VERSION}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.VERSION}} .
+      - docker buildx build --platform linux/amd64 --target production --build-arg VERSION={{.VERSION}}+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.VERSION}} -t {{.IMAGE}}:{{.VERSION}}-build.{{.BUILD}} .
 
   build-stg:
-    desc: "Build the kio-api staging image (usage: task build-stg BRANCH=feat/my-feature)"
+    desc: "Build the kio-api staging image — includes the test suite (usage: task build-stg BRANCH=feat/my-feature)"
     vars:
       BRANCH: '{{.BRANCH | default "unknown"}}'
       TAG:
         sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+      BUILD:
+        sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 --build-arg VERSION={{.BRANCH}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.TAG}} .
+      # Staging uses the `test` target so the deployed image carries pytest + the
+      # test suite (run them in-cluster with `kubectl exec`). Production uses
+      # `--target production`, which excludes tests and dev tooling.
+      - docker buildx build --platform linux/amd64 --target test --build-arg VERSION={{.BRANCH}}+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.TAG}} -t {{.IMAGE}}:{{.TAG}}-build.{{.BUILD}} .
 
   build-ui-dev:
     desc: Build the kio-ui image tagged dev-latest (linux/amd64)
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:dev-latest .
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:dev-latest -t {{.IMAGE_UI}}:dev-build.{{.BUILD}} .
 
   build-ui-prd:
     desc: Build the kio-ui image tagged with the current version (linux/amd64)
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.VERSION}} .
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.VERSION}} -t {{.IMAGE_UI}}:{{.VERSION}}-build.{{.BUILD}} .
 
   build-ui-stg:
     desc: "Build the kio-ui staging image with branch banner (usage: task build-ui-stg BRANCH=feat/my-feature)"
@@ -68,8 +89,10 @@ tasks:
       BRANCH: '{{.BRANCH | default "unknown"}}'
       TAG:
         sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+      BUILD:
+        sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 --build-arg KIO_BRANCH={{.BRANCH}} -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.TAG}} .
+      - docker buildx build --platform linux/amd64 --build-arg KIO_BRANCH={{.BRANCH}} -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.TAG}} -t {{.IMAGE_UI}}:{{.TAG}}-build.{{.BUILD}} .
 
   test:e2e:
     desc: "Run all e2e tests (API + UI) — set KIO_API_URL, KIO_UI_URL, KIO_USERNAME, KIO_PASSWORD"
@@ -115,11 +138,28 @@ tasks:
       - python3 -c "v=open('VERSION').read().strip().split('.'); v[2]=str(int(v[2])+1); open('VERSION','w').write('.'.join(v)+'\n')"
       - echo "-> v$(cat VERSION)"
 
+  bump:build:
+    desc: Increment the monotonic build number (BUILD file). Run once per release.
+    cmds:
+      - python3 -c "n=int(open('BUILD').read().strip() or 0)+1; open('BUILD','w').write(str(n)+'\n')"
+      - echo "-> build $(cat BUILD)"
+
   test:api:
     desc: Run API unit tests
     dir: src/api
     cmds:
       - uv run pytest {{.CLI_ARGS}}
+
+  build-test:api:
+    desc: Build the kio-api test image (runtime + dev deps + tests)
+    cmds:
+      - docker buildx build --load --platform linux/amd64 --target test -f docker/Dockerfile.api -t {{.IMAGE}}:test .
+
+  test:api:docker:
+    desc: "Build the test image and run the API unit tests inside it (mirrors prod runtime)"
+    cmds:
+      - task: build-test:api
+      - docker run --rm {{.IMAGE}}:test pytest -q {{.CLI_ARGS}}
 
   db:migrate:
     desc: Run Alembic migrations to head inside the API container
@@ -144,12 +184,15 @@ tasks:
       - npm run dev
 
   git-tag:
-    desc: Commit the version stamp and create a git tag for the current version
+    desc: Commit the version + build stamp and create a git tag for the current version
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
-      - git add VERSION kubernetes-manifests/envs/prd/kustomization.yaml
-      - git commit -m "release v{{.VERSION}}"
-      - git tag -a "v{{.VERSION}}" -m "Release v{{.VERSION}}"
-      - echo "Tagged v{{.VERSION}} -- git push origin main --tags"
+      - git add VERSION BUILD kubernetes-manifests/envs/prd/kustomization.yaml
+      - git commit -m "release v{{.VERSION}} (build {{.BUILD}})"
+      - git tag -a "v{{.VERSION}}" -m "Release v{{.VERSION}} (build {{.BUILD}})"
+      - echo "Tagged v{{.VERSION}} build {{.BUILD}} -- git push origin main --tags"
 
   ha:deploy:
     desc: Deploy the kio Home Assistant integration and restart HA core
@@ -158,16 +201,6 @@ tasks:
       - scp -r src/ha-integration/custom_components/kio/. home-assistant:/config/custom_components/kio/
       - ssh home-assistant "ha core restart"
       - echo "Deployed kio integration to Home Assistant"
-
-  kio-1:setup:
-    desc: First-time setup of kio-1 using the dev config file
-    cmds:
-      - ssh kio-1 "mkdir -p {{.KIO_DIR}}/pi-agent"
-      - scp -r src/pi-agent/. kio-1:{{.KIO_DIR}}/pi-agent
-      - scp VERSION kio-1:{{.KIO_DIR}}/pi-agent/VERSION
-      - scp configs/agents/kio-1-kiosk.dev.yaml kio-1:/tmp/kio-setup-config.yaml
-      - ssh kio-1 "sudo bash {{.KIO_DIR}}/pi-agent/setup.sh --config /tmp/kio-setup-config.yaml"
-      - ssh kio-1 "rm -f /tmp/kio-setup-config.yaml"
 
   kio-1:deploy:
     desc: Deploy pi-agent to kio-1 and restart the agent service
@@ -222,7 +255,7 @@ tasks:
       - scp -r src/pi-agent/. {{.HOST}}:/tmp/kio-deploy
       - scp VERSION {{.HOST}}:/tmp/kio-deploy/VERSION
       - "{{if .CONFIG}}scp {{.CONFIG}} {{.HOST}}:/tmp/kio-setup-config.yaml{{else}}true{{end}}"
-      - ssh -t {{.HOST}} "sudo bash /tmp/kio-deploy/setup.sh {{if .CONFIG}}--config /tmp/kio-setup-config.yaml{{end}}"
+      - ssh -t {{.HOST}} "sudo bash /tmp/kio-deploy/setup.sh --local {{if .CONFIG}}--config /tmp/kio-setup-config.yaml{{end}}"
       - "{{if .CONFIG}}ssh {{.HOST}} 'rm -f /tmp/kio-setup-config.yaml'{{else}}true{{end}}"
       - ssh {{.HOST}} "rm -rf /tmp/kio-deploy"
 
@@ -342,15 +375,24 @@ tasks:
     cmds:
       - kubectl port-forward -n q-postgres svc/q-postgres-rw 5432:5432
 
+  # Push tasks send both the rolling tag and the immutable -build.N tag.
   push-dev:
     desc: Push the dev API image to Harbor
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
       - docker push {{.IMAGE}}:dev-latest
+      - docker push {{.IMAGE}}:dev-build.{{.BUILD}}
 
   push-prd:
     desc: Push the versioned API image to Harbor
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
       - docker push {{.IMAGE}}:{{.VERSION}}
+      - docker push {{.IMAGE}}:{{.VERSION}}-build.{{.BUILD}}
 
   push-stg:
     desc: "Push the staging API image to Harbor (usage: task push-stg BRANCH=feat/my-feature)"
@@ -358,18 +400,29 @@ tasks:
       BRANCH: '{{.BRANCH | default "unknown"}}'
       TAG:
         sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+      BUILD:
+        sh: cat BUILD
     cmds:
       - docker push {{.IMAGE}}:{{.TAG}}
+      - docker push {{.IMAGE}}:{{.TAG}}-build.{{.BUILD}}
 
   push-ui-dev:
     desc: Push the dev UI image to Harbor
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
       - docker push {{.IMAGE_UI}}:dev-latest
+      - docker push {{.IMAGE_UI}}:dev-build.{{.BUILD}}
 
   push-ui-prd:
     desc: Push the versioned UI image to Harbor
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
       - docker push {{.IMAGE_UI}}:{{.VERSION}}
+      - docker push {{.IMAGE_UI}}:{{.VERSION}}-build.{{.BUILD}}
 
   push-ui-stg:
     desc: "Push the staging UI image to Harbor (usage: task push-ui-stg BRANCH=feat/my-feature)"
@@ -377,12 +430,16 @@ tasks:
       BRANCH: '{{.BRANCH | default "unknown"}}'
       TAG:
         sh: "echo stg-{{.BRANCH}} | tr '/' '-'"
+      BUILD:
+        sh: cat BUILD
     cmds:
       - docker push {{.IMAGE_UI}}:{{.TAG}}
+      - docker push {{.IMAGE_UI}}:{{.TAG}}-build.{{.BUILD}}
 
   release-dev:
     desc: Build, push, and deploy API + UI to kio-dev
     cmds:
+      - task: bump:build
       - task: build-dev
       - task: push-dev
       - task: build-ui-dev
@@ -393,6 +450,7 @@ tasks:
   release-prd:
     desc: "Full production release: build API + UI, push, stamp kustomization, deploy, git-tag"
     cmds:
+      - task: bump:build
       - task: stamp-prd
       - task: build-prd
       - task: push-prd
@@ -407,6 +465,7 @@ tasks:
     vars:
       BRANCH: '{{.BRANCH | default "unknown"}}'
     cmds:
+      - task: bump:build
       - task: build-stg
         vars:
           BRANCH: '{{.BRANCH}}'
@@ -469,6 +528,9 @@ tasks:
       - kustomize edit set image {{.IMAGE_UI}}:{{.VERSION}}
 
   version:
-    desc: Show the current version
+    desc: Show the current version and build number
+    vars:
+      BUILD:
+        sh: cat BUILD
     cmds:
-      - echo "v{{.VERSION}}"
+      - echo "v{{.VERSION}}+build.{{.BUILD}}"

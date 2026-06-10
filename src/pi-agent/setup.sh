@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # setup.sh — install the kio agent on this Raspberry Pi
+# Targets Raspberry Pi OS (Raspbian-type) on a Raspberry Pi; exits early otherwise.
 #
 # First install (no existing config):
 #   bash setup.sh                          # prompts for API URL and token
@@ -14,6 +15,19 @@
 #   --token       Node token (kio_...)
 #   --start-url   Initial URL Chromium opens on boot
 #   --features    Comma-separated: display_power,cec,input_switch
+#   --local       Run only from manually-copied source; never pull from git.
+#                 Run from inside the copied src/pi-agent/ directory.
+#   --ca-cert     Install this CA into the system trust store before contacting
+#                 the API (so TLS verification works on first connect)
+#   --accept-cert   Trust-on-first-use: fetch the API's cert during setup, pin it
+#                   to /etc/kio/api-pinned.crt, and verify against it thereafter.
+#                   For private certs when no CA file is on hand.
+#   --insecure-tls  Skip API TLS verification (testing only)
+#   --allow-http    Pre-acknowledge an unencrypted http:// API (non-interactive
+#                   runs; interactive runs are prompted to confirm instead)
+#   --dns         Custom DNS server(s) for the node (e.g. a Pi-hole that resolves
+#                 internal API hostnames). Comma/space separated. Prompted if a
+#                 terminal is attached; KIO_DNS works too.
 
 set -euo pipefail
 
@@ -25,13 +39,53 @@ CONFIG_FILE="/etc/kio/kiosk.yaml"
 CONFIG_DIR="/etc/kio"
 
 # ---------------------------------------------------------------------------
+# OS guard — this installer targets Raspberry Pi OS (Raspbian-type)
+# ---------------------------------------------------------------------------
+# It uses apt and Pi-specific bits (raspi-config, i2c, HDMI cmdline, labwc), so it
+# refuses to half-install on anything else. Newer Raspberry Pi OS reports ID=debian
+# (not raspbian), so we key off the Pi markers + apt rather than os-release alone.
+# Runs before the git bootstrap so a wrong host fails fast, without cloning.
+is_raspberry_pi_os() {
+  command -v apt-get >/dev/null 2>&1 || return 1
+  [[ -f /etc/rpi-issue ]] && return 0
+  grep -qi "raspberry pi" /proc/device-tree/model 2>/dev/null && return 0
+  grep -qiE '^ID(_LIKE)?=.*raspbian' /etc/os-release 2>/dev/null && return 0
+  return 1
+}
+if ! is_raspberry_pi_os; then
+  _os="$( (. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || echo unknown )"
+  _model="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo 'non-Pi hardware')"
+  echo "  ERROR: kio setup.sh targets Raspberry Pi OS (Raspbian-type) on a Raspberry Pi."
+  echo "         Detected: ${_os} on ${_model}."
+  echo "         Aborting to avoid a partial install on an unsupported system."
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Self-bootstrap for `curl ... | bash`
 # ---------------------------------------------------------------------------
 # When piped from stdin the agent's sibling files (agent.py, scripts/, the service
 # unit) aren't on disk, and interactive `read` prompts would consume the piped
 # script instead of terminal input. If those files aren't beside us, clone the repo
 # and re-exec setup.sh from the checkout with stdin reconnected to the terminal.
+#
+# --local (or KIO_NO_BOOTSTRAP=1) disables this entirely: run only from
+# manually-copied source and never touch git. Detected here, before arg parsing,
+# because the bootstrap check runs first.
+KIO_NO_BOOTSTRAP="${KIO_NO_BOOTSTRAP:-0}"
+for _a in "$@"; do
+  case "$_a" in
+    --local|--no-bootstrap|--no-git) KIO_NO_BOOTSTRAP=1 ;;
+  esac
+done
+
 if [[ -z "${KIO_BOOTSTRAPPED:-}" && ( -z "$SCRIPT_DIR" || ! -f "$SCRIPT_DIR/agent.py" ) ]]; then
+  if [[ "$KIO_NO_BOOTSTRAP" == "1" ]]; then
+    echo "  ERROR: --local was given but agent.py is not next to setup.sh."
+    echo "         Copy the whole src/pi-agent/ directory to the Pi and run setup.sh"
+    echo "         from inside it (e.g. 'cd src/pi-agent && bash setup.sh --local ...')."
+    exit 1
+  fi
   KIO_REPO="${KIO_REPO:-https://github.com/politeauthority/kio.git}"
   KIO_BRANCH="${KIO_BRANCH:-main}"
   echo "  Fetching kio agent source ($KIO_REPO@$KIO_BRANCH) ..."
@@ -108,12 +162,25 @@ API_TOKEN_ARG=""
 START_URL_ARG=""
 FEATURES_ARG=""
 CONFIG_FILE_ARG=""
+CA_CERT_ARG=""
+# Verify the API's TLS cert by default. Opt out with --insecure-tls (or
+# KIO_TLS_INSECURE=1) only for testing against a self-signed API with no CA handy.
+INSECURE_TLS="${KIO_TLS_INSECURE:-0}"
+# --accept-cert (trust-on-first-use): fetch the API's cert during setup, pin it,
+# and verify against it thereafter — for private certs where no CA file is handy.
+ACCEPT_CERT="${KIO_ACCEPT_CERT:-0}"
+# Pre-acknowledge an unencrypted http:// API for non-interactive runs. Interactive
+# runs are prompted instead. (--insecure-tls also satisfies this.)
+ALLOW_HTTP="${KIO_ALLOW_HTTP:-0}"
+# Optional custom DNS server(s) for the node — e.g. a Pi-hole that resolves internal
+# names like the API hostname. Comma/space separated. Interactive runs are prompted.
+DNS_ARG="${KIO_DNS:-}"
 CLEAR=0
 
 while [[ $# -gt 0 ]]; do
   opt="$1"
   case "$opt" in
-    --env|--api-url|--token|--start-url|--features|--config)
+    --env|--api-url|--token|--start-url|--features|--config|--ca-cert|--dns)
       # Value-taking options: fail clearly if the value is missing (rather than a
       # cryptic "$2: unbound variable" under set -u).
       [[ $# -ge 2 ]] || { echo "Error: $opt requires a value"; exit 1; }
@@ -125,11 +192,38 @@ while [[ $# -gt 0 ]]; do
         --start-url)  START_URL_ARG="$val" ;;
         --features)   FEATURES_ARG="$val" ;;
         --config)     CONFIG_FILE_ARG="$val" ;;
+        --ca-cert)    CA_CERT_ARG="$val" ;;
+        --dns)        DNS_ARG="$val" ;;
       esac ;;
+    --insecure-tls) INSECURE_TLS=1; shift ;;
+    --accept-cert) ACCEPT_CERT=1; shift ;;
+    --allow-http) ALLOW_HTTP=1; shift ;;
+    # Handled early (before the git bootstrap); accept here so it isn't rejected.
+    --local|--no-bootstrap|--no-git) shift ;;
     --clear) CLEAR=1; shift ;;
     *) echo "Unknown option: $opt"; exit 1 ;;
   esac
 done
+
+if [[ "$INSECURE_TLS" == "1" && "$ACCEPT_CERT" == "1" ]]; then
+  echo "Error: --insecure-tls and --accept-cert are mutually exclusive"; exit 1
+fi
+
+# curl TLS posture for setup-time calls: verify by default; skip verification only
+# when the operator explicitly opted into insecure TLS.
+CURL_TLS_OPT=""
+[[ "$INSECURE_TLS" == "1" ]] && CURL_TLS_OPT="-k"
+
+# Install a provided CA cert into the system trust store *before* we contact the
+# API, so verification works from first contact — this avoids the bootstrap
+# problem where the agent would otherwise fetch certs over a connection it can't
+# yet verify. (The cert is public, not secret; 644 is correct.)
+if [[ -n "$CA_CERT_ARG" ]]; then
+  [[ -f "$CA_CERT_ARG" ]] || { echo "  CA cert not found: $CA_CERT_ARG"; exit 1; }
+  echo "  Installing CA cert into system trust store ..."
+  sudo install -m 644 "$CA_CERT_ARG" /usr/local/share/ca-certificates/kio-ca.crt
+  sudo update-ca-certificates >/dev/null
+fi
 
 # ---------------------------------------------------------------------------
 # --clear: remove stored env config and exit
@@ -228,17 +322,175 @@ fi
 check_api_reachable() {
   local url="$1"
   echo "  Checking connectivity to $url ..."
-  local http_code
-  http_code=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "${url}/_health" 2>/dev/null) || true
+  local http_code rc
+  http_code=$(curl -s $CURL_TLS_OPT -o /dev/null -w "%{http_code}" --max-time 5 "${url}/_health" 2>/dev/null) && rc=0 || rc=$?
   if [[ "$http_code" == "200" ]]; then
     echo "  API reachable."
-  else
-    echo ""
-    echo "  ERROR: Could not reach ${url}/_health (got: ${http_code:-no response})"
-    echo "  Check that the API is running and the URL is correct, then try again."
+    return
+  fi
+  # curl 35/51/58/60/66/77/83 = TLS/cert trust failures: the API answered but its
+  # cert isn't trusted by this Pi. Call this out specifically — otherwise the
+  # operator chases a phantom outage instead of the real issue (trust must be
+  # anchored before first contact; it can't be fetched over the same connection).
+  case "$rc" in
+    35|51|58|60|66|77|83)
+      echo ""
+      echo "  ERROR: ${url} is reachable but its TLS certificate is not trusted (curl exit $rc)."
+      echo "  Trust has to be anchored before first contact. Re-run with one of:"
+      echo "    --ca-cert /path/to/ca.crt   # internal / self-signed CA (recommended)"
+      echo "    --insecure-tls              # skip verification (testing only)"
+      exit 1 ;;
+  esac
+  echo ""
+  echo "  ERROR: Could not reach ${url}/_health (got: ${http_code:-no response})"
+  echo "  Check that the API is running and the URL is correct, then try again."
+  exit 1
+}
+
+# Trust-on-first-use: retrieve the API's TLS cert chain now, pin it to disk, and
+# point subsequent verification (setup curls + the running agent) at it. The first
+# fetch is unverified — that's the TOFU tradeoff — so we print the SHA-256
+# fingerprint to check out-of-band. Stored OUTSIDE /etc/kio/certs/ because the
+# agent's sync_certs wipes that directory on every sync.
+PINNED_CERT_DEST="/etc/kio/api-pinned.crt"
+PINNED_CERT=""
+
+pin_api_cert() {
+  local url="$1"
+  command -v openssl >/dev/null 2>&1 || { echo "  ERROR: openssl is required for --accept-cert"; exit 1; }
+  local hostport="${url#*://}"; hostport="${hostport%%/*}"
+  local host="${hostport%%:*}" port="${hostport##*:}"
+  [[ "$port" == "$host" ]] && port=443
+  echo "  Retrieving TLS certificate from ${host}:${port} (trust-on-first-use) ..."
+  local chain
+  chain=$(echo | openssl s_client -connect "${host}:${port}" -servername "$host" -showcerts 2>/dev/null \
+            | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/') || true
+  if [[ -z "$chain" ]]; then
+    echo "  ERROR: no certificate returned from ${host}:${port} — is it serving HTTPS there?"
     exit 1
   fi
+  sudo mkdir -p "$(dirname "$PINNED_CERT_DEST")"
+  printf '%s\n' "$chain" | sudo tee "$PINNED_CERT_DEST" >/dev/null
+  sudo chmod 644 "$PINNED_CERT_DEST"
+  PINNED_CERT="$PINNED_CERT_DEST"
+  # Verify the rest of setup (and the agent) against exactly what we just pinned.
+  CURL_TLS_OPT="--cacert $PINNED_CERT"
+  local fp
+  fp=$(printf '%s\n' "$chain" | openssl x509 -noout -fingerprint -sha256 2>/dev/null | sed 's/^.*=//') || true
+  echo "  Pinned $(grep -c 'BEGIN CERTIFICATE' <<<"$chain" || true) cert(s) -> $PINNED_CERT_DEST"
+  echo "  Leaf SHA-256: ${fp:-unavailable}"
+  echo "  WARNING: verify this fingerprint against your API before trusting this node."
 }
+
+# An http:// API has no transport encryption — the node token and every command
+# cross the network in the clear. Accept it, but make the operator acknowledge the
+# risk: prompt when there's a terminal, or require --allow-http (or --insecure-tls)
+# for non-interactive runs. https:// and other schemes pass through untouched.
+confirm_http_transport() {
+  local url="$1"
+  [[ "$url" =~ ^http:// ]] || return 0
+  echo ""
+  echo "  WARNING: $url uses plain HTTP — the connection to the API is NOT encrypted."
+  echo "  The node token and all commands can be read or modified by anyone on the network."
+  echo "  Prefer an https:// URL. Continue only on a trusted/isolated network."
+  if [[ "$ALLOW_HTTP" == "1" || "$INSECURE_TLS" == "1" ]]; then
+    echo "  Proceeding (--allow-http / --insecure-tls acknowledged the risk)."
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    echo ""
+    echo "  ERROR: refusing to use an HTTP API non-interactively without acknowledgement."
+    echo "  Re-run interactively to confirm, or pass --allow-http (or KIO_ALLOW_HTTP=1)."
+    exit 1
+  fi
+  local ans=""
+  read -rp "  Continue over unencrypted HTTP? [y/N] " ans
+  [[ "$ans" =~ ^[Yy]$ ]] || { echo "  Aborted — use an https:// API URL, or re-run and confirm."; exit 1; }
+}
+
+# Best-effort confirmation that a DNS server is now in the active resolver set.
+_verify_dns() {
+  local first="${1%% *}" ok=""
+  if command -v resolvectl >/dev/null 2>&1; then
+    resolvectl dns 2>/dev/null | grep -qw "$first" && ok=1
+  fi
+  [[ -z "$ok" ]] && grep -qw "$first" /etc/resolv.conf 2>/dev/null && ok=1
+  if [[ -n "$ok" ]]; then
+    echo "  Verified: $first is in the active resolver set."
+  else
+    echo "  NOTE: couldn't confirm $first is live yet; it takes effect after reboot."
+    echo "        Check later with: resolvectl dns  (or: nmcli dev show | grep IP4.DNS)"
+  fi
+}
+
+# Point the node at a custom DNS server (e.g. a Pi-hole) so it can resolve internal
+# names like the API hostname. Written to whatever network stack is active, in a
+# location that survives reboots — and, for NetworkManager, one that also survives
+# netplan regenerating the connection profiles on boot.
+apply_dns() {
+  local dns
+  dns="$(echo "$1" | tr ',' ' ' | xargs)"   # comma/space separated -> single-spaced, trimmed
+  [[ -z "$dns" ]] && return 0
+  local csv="${dns// /,}"                    # comma-separated form for nmcli / conf.d
+  echo "  Configuring DNS server(s): $dns"
+
+  if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager; then
+    # Primary: a global-DNS drop-in under /etc/NetworkManager/conf.d/. netplan only
+    # regenerates connection profiles (in /run) — it never touches conf.d, so this
+    # survives a reboot even though the active profiles live on tmpfs. It also wins
+    # over per-connection DNS.
+    sudo mkdir -p /etc/NetworkManager/conf.d
+    printf '# Managed by kio setup.sh\n[global-dns-domain-*]\nservers=%s\n' "$csv" \
+      | sudo tee /etc/NetworkManager/conf.d/90-kio-dns.conf >/dev/null
+    # Belt-and-suspenders: also set it per active connection (persisted by NM's
+    # store; on Debian's netplan backend this is written back to /etc/netplan).
+    local conn
+    while IFS= read -r conn; do
+      [[ -z "$conn" ]] && continue
+      sudo nmcli con mod "$conn" ipv4.dns "$csv" ipv4.ignore-auto-dns yes 2>/dev/null || true
+    done < <(nmcli -t -f NAME,DEVICE con show --active 2>/dev/null | awk -F: '$2!="lo" && $2!=""{print $1}')
+    # Reload config to apply now WITHOUT bouncing links (a con up over Wi-Fi/SSH
+    # could drop this very session). A full apply happens on the post-setup reboot.
+    sudo nmcli general reload 2>/dev/null || true
+    echo "  DNS set via NetworkManager (global conf.d drop-in + per-connection)."
+    _verify_dns "$dns"
+    return 0
+  fi
+
+  if systemctl is-active --quiet systemd-resolved; then
+    sudo mkdir -p /etc/systemd/resolved.conf.d
+    printf '[Resolve]\nDNS=%s\n' "$dns" | sudo tee /etc/systemd/resolved.conf.d/kio-dns.conf >/dev/null
+    sudo systemctl restart systemd-resolved
+    echo "  DNS set via systemd-resolved."
+    _verify_dns "$dns"
+    return 0
+  fi
+
+  if systemctl is-active --quiet dhcpcd; then
+    sudo sed -i '/# kio-dns-start/,/# kio-dns-end/d' /etc/dhcpcd.conf
+    { echo "# kio-dns-start"; echo "static domain_name_servers=$dns"; echo "# kio-dns-end"; } \
+      | sudo tee -a /etc/dhcpcd.conf >/dev/null
+    sudo systemctl restart dhcpcd
+    echo "  DNS set via dhcpcd."
+    _verify_dns "$dns"
+    return 0
+  fi
+
+  # Last resort — may be overwritten by the network manager on reboot.
+  printf 'nameserver %s\n' $dns | sudo tee /etc/resolv.conf >/dev/null
+  echo "  WARNING: wrote /etc/resolv.conf directly — this may not survive a reboot."
+}
+
+# Optional custom DNS, set before contacting the API so an internal API hostname
+# (e.g. *.colfax.int served by a Pi-hole) resolves. Prompted interactively; use
+# --dns / KIO_DNS for automation. Blank keeps the current DNS.
+if [[ -z "$DNS_ARG" && -t 0 && -z "$CONFIG_FILE_ARG" ]]; then
+  echo ""
+  echo "  If the API URL uses an internal hostname (e.g. *.colfax.int), this Pi needs a"
+  echo "  DNS server that can resolve it — such as a Pi-hole. Leave blank to keep current DNS."
+  read -rp "  Custom DNS server IP (blank to skip): " DNS_ARG
+fi
+[[ -n "$DNS_ARG" ]] && apply_dns "$DNS_ARG"
 
 if [[ -n "$CONFIG_FILE_ARG" ]]; then
   # --config: read everything directly from the provided kiosk YAML — no prompts, no API fetch
@@ -256,6 +508,7 @@ if [[ -n "$CONFIG_FILE_ARG" ]]; then
   # id is optional — the agent resolves its kiosk_id from the API via its token.
   [[ -z "$API_URL"   ]] && echo "  Config missing api.url"   && exit 1
   [[ -z "$API_TOKEN" ]] && echo "  Config missing api.token" && exit 1
+  confirm_http_transport "$API_URL"
 elif [[ -f "$CONFIG_FILE" ]] && [[ -z "$API_TOKEN_ARG" ]]; then
   echo "  Loading config from $CONFIG_FILE"
   KIOSK_ID=$(yaml_get id)
@@ -266,6 +519,8 @@ elif [[ -f "$CONFIG_FILE" ]] && [[ -z "$API_TOKEN_ARG" ]]; then
   MQTT_HOST=$(yaml_get_nested mqtt host)
   MQTT_PORT=$(yaml_get_nested mqtt port)
   MQTT_PREFIX=$(yaml_get_nested mqtt topic_prefix)
+  confirm_http_transport "$API_URL"
+  [[ "$ACCEPT_CERT" == "1" ]] && pin_api_cert "$API_URL"
   check_api_reachable "$API_URL"
 else
   # API URL is taken only from an explicit --api-url on first install; it is never
@@ -279,6 +534,8 @@ else
   fi
   [[ -z "$API_URL" ]] && echo "API URL is required (pass --api-url or enter it when prompted)" && exit 1
 
+  confirm_http_transport "$API_URL"
+  [[ "$ACCEPT_CERT" == "1" ]] && pin_api_cert "$API_URL"
   check_api_reachable "$API_URL"
 
   # Prompt for token
@@ -305,7 +562,7 @@ if [[ -z "$CONFIG_FILE_ARG" ]]; then
   echo ""
   echo "  Fetching config from $API_URL ..."
 
-  AGENT_CONFIG=$(curl -skf \
+  AGENT_CONFIG=$(curl -sf $CURL_TLS_OPT \
     -H "Authorization: Bearer $API_TOKEN" \
     "${API_URL}/agent/config" 2>/dev/null) || true
 
@@ -347,7 +604,7 @@ echo ""
 # [1/5] System packages
 # ---------------------------------------------------------------------------
 
-sudo apt-get install -y -q ddcutil v4l-utils git unclutter-xfixes wlr-randr kanshi
+sudo apt-get install -y -q ddcutil v4l-utils git unclutter-xfixes wlr-randr kanshi dnsutils
 sudo usermod -aG i2c "$TARGET_USER"
 
 # uv must belong to the kiosk user (the deploy/venv use $TARGET_HOME/.local/bin/uv).
@@ -360,7 +617,7 @@ echo "$TARGET_USER ALL=(ALL) NOPASSWD: /sbin/reboot, /usr/sbin/reboot, /usr/bin/
   | sudo tee /etc/sudoers.d/kio-agent > /dev/null
 sudo chmod 440 /etc/sudoers.d/kio-agent
 
-echo "[1/6] System packages installed (ddcutil, v4l-utils, unclutter-xfixes, i2c group, sudoers)"
+echo "[1/6] System packages installed (ddcutil, v4l-utils, unclutter-xfixes, dnsutils, i2c group, sudoers)"
 
 # ---------------------------------------------------------------------------
 # [2/5] Config
@@ -374,8 +631,15 @@ fix_owner /etc/kio/certs
 if [[ -n "$CONFIG_FILE_ARG" ]]; then
   cp "$CONFIG_FILE_ARG" /etc/kio/kiosk.yaml
 else
+  # Verify TLS by default (agent treats a missing tls_verify as true).
+  #   --insecure-tls  -> tls_verify: false  (no verification)
+  #   --accept-cert   -> tls_verify: <pinned cert path>  (verify against it)
   TLS_VERIFY_LINE=""
-  [[ "$ENV" == "prd" ]] && TLS_VERIFY_LINE=$'\n  tls_verify: false'
+  if [[ "$INSECURE_TLS" == "1" ]]; then
+    TLS_VERIFY_LINE=$'\n  tls_verify: false'
+  elif [[ -n "$PINNED_CERT" ]]; then
+    TLS_VERIFY_LINE=$'\n  tls_verify: '"$PINNED_CERT"
+  fi
 
   FEATURES_YAML=""
   if [[ -n "$FEATURES" ]]; then
@@ -398,6 +662,11 @@ mqtt:
   topic_prefix: $MQTT_PREFIX
 EOF
 fi
+
+# The config holds the API bearer token in plaintext — keep it readable only by
+# the agent's user (the kio-agent service runs as $TARGET_USER).
+sudo chown "$TARGET_USER:$TARGET_USER" /etc/kio/kiosk.yaml
+sudo chmod 600 /etc/kio/kiosk.yaml
 
 touch /etc/kio/browser-flags
 

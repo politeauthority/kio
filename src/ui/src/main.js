@@ -22,6 +22,7 @@ import SettingsApiKeys from './settings/SettingsApiKeys.vue'
 import SettingsTimingDefaults from './settings/SettingsTimingDefaults.vue'
 import SettingsHosts from './settings/SettingsHosts.vue'
 import SettingsBrowserFlags from './settings/SettingsBrowserFlags.vue'
+import SettingsDefaultPage from './settings/SettingsDefaultPage.vue'
 import SettingsCertificates from './settings/SettingsCertificates.vue'
 import EventLog from './EventLog.vue'
 import { isAuthenticated, login, AUTH_ENABLED } from './auth'
@@ -49,6 +50,7 @@ const router = createRouter({
     { path: '/settings/timing', component: SettingsTimingDefaults, meta: { title: 'Timing' } },
     { path: '/settings/hosts', component: SettingsHosts, meta: { title: 'Hosts' } },
     { path: '/settings/browser-flags', component: SettingsBrowserFlags, meta: { title: 'Browser Flags' } },
+    { path: '/settings/default-page', component: SettingsDefaultPage, meta: { title: 'Default Page' } },
     { path: '/settings/certificates', component: SettingsCertificates, meta: { title: 'Certificates' } },
     { path: '/about', component: About, meta: { title: 'About' } },
   ],

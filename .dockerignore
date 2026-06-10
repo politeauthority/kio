@@ -1,0 +1,47 @@
+# Build context is the repo root for both images (docker/Dockerfile.api and
+# docker/Dockerfile.ui). Keep the context tiny and keep secrets/junk out of the
+# layers. Only src/api and src/ui are ever COPYed; everything below is either
+# rebuilt inside the image, unrelated to the images, or sensitive.
+
+# Secrets — must never enter an image layer
+**/.env
+**/.env.*
+!**/.env.example
+
+# VCS / tooling metadata
+.git
+.gitignore
+.github
+.vscode
+.idea
+**/.DS_Store
+
+# Python build/test artifacts (deps are reinstalled from uv.lock in-image)
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.venv
+**/venv
+
+# Node — reinstalled from package-lock.json via `npm ci`; dist is rebuilt
+**/node_modules
+src/ui/dist
+
+# Components and assets that are not part of either container image
+api/
+configs/
+docs/
+kubernetes-manifests/
+scripts/
+tests/
+src/pi-agent/
+src/ha-integration/
+docker/.env
+docker/docker-compose.yml
+
+# Docs / misc
+**/*.md
+VERSION
+BUILD

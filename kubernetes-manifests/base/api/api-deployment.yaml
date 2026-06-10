@@ -17,12 +17,25 @@ spec:
       labels:
         app: kio-api
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       imagePullSecrets:
         - name: harbor-registry
       containers:
         - name: kio-api
           image: harbor.squid-ink.us/politeauthority/kio-api:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           command:
             - python
             - -m
@@ -39,6 +52,9 @@ spec:
           ports:
             - name: api
               containerPort: 8000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           envFrom:
             - configMapRef:
                 name: kio-api-config
@@ -78,3 +94,6 @@ spec:
               port: 8000
             failureThreshold: 30
             periodSeconds: 10
+      volumes:
+        - name: tmp
+          emptyDir: {}

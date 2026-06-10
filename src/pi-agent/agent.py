@@ -28,9 +28,39 @@ logger = logging.getLogger("kio-agent")
 
 CONFIG_FILE = "/etc/kio/kiosk.yaml"
 SETTINGS_FILE = "/etc/kio/settings.json"
+COMMS_FILE = "/etc/kio/comms-state.json"
 CDP_BASE = "http://localhost:9222"
 _agent: "KioAgent | None" = None
-TLS_VERIFY: bool = True  # set from config at startup
+
+# Resolved from config at startup; passed straight to requests' verify= (a bool,
+# or a path to a CA bundle).
+TLS_VERIFY: "bool | str" = True
+
+# Debian / Raspberry Pi OS system trust store. update-ca-certificates (driven by
+# sync_certs) maintains it, so it covers public CAs *and* any internal CA the node
+# has been told to trust — which is why "verify on" defaults here rather than to
+# the bundled certifi list (certifi never sees update-ca-certificates' additions).
+_SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+
+
+def resolve_tls_verify(value: "bool | str") -> "bool | str":
+    """Map config's tls_verify into a value for requests' verify= argument.
+
+    - false / "false" / "0" / "no" / "off" -> False  (no verification; insecure)
+    - any other string                      -> that path, used as a CA bundle (pinning)
+    - true (the default)                    -> the system CA store if present, else
+                                               certifi (returns True)
+    """
+    if isinstance(value, str):
+        low = value.strip().lower()
+        if low in ("false", "0", "no", "off"):
+            return False
+        if low not in ("true", "1", "yes", "on", ""):
+            return value  # explicit CA bundle path
+        value = True
+    if not value:
+        return False
+    return _SYSTEM_CA_BUNDLE if os.path.exists(_SYSTEM_CA_BUNDLE) else True
 
 def _read_version() -> str:
     try:
@@ -109,6 +139,64 @@ def _save_hw_state(state: dict) -> None:
         logger.warning("Failed to persist hardware state: %s", exc)
 
 
+# ---------------------------------------------------------------------------
+# Comms state — per-API-URL record of when we last reached each server.
+#
+# Dev nodes hop between API servers, so contact history is keyed by API URL
+# rather than kept as one global timestamp: switching servers must not erase
+# what we knew about the previous one. Each record holds the last-contact time
+# plus whatever details the caller wants to remember (resolved kiosk_id, the
+# endpoint that succeeded, agent version, etc.).
+# ---------------------------------------------------------------------------
+
+def _load_comms_state() -> dict:
+    try:
+        with open(COMMS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_comms_state(state: dict) -> None:
+    try:
+        with open(COMMS_FILE, "w") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+    except PermissionError:
+        logger.warning("Permission denied writing %s", COMMS_FILE)
+        _report_file_error(COMMS_FILE)
+    except Exception as exc:
+        logger.warning("Failed to persist comms state: %s", exc)
+
+
+def record_api_contact(api_url: str, **details) -> None:
+    """Stamp a successful API communication for `api_url` and merge in `details`.
+
+    Updates `last_contact_at` (ISO-8601) and `last_contact_epoch` (unix seconds)
+    so anything can compute "time since last contact" later, and folds any extra
+    keyword details into that server's record without dropping previously stored
+    fields. Best-effort: a write failure is logged, never raised.
+    """
+    if not api_url:
+        return
+    now = datetime.now(timezone.utc)
+    state = _load_comms_state()
+    rec = state.get(api_url) or {}
+    rec["last_contact_at"] = now.isoformat()
+    rec["last_contact_epoch"] = now.timestamp()
+    rec.update(details)
+    state[api_url] = rec
+    _save_comms_state(state)
+
+
+def seconds_since_last_contact(api_url: str) -> float | None:
+    """Seconds since we last reached `api_url`, or None if never recorded."""
+    rec = _load_comms_state().get(api_url) or {}
+    epoch = rec.get("last_contact_epoch")
+    if epoch is None:
+        return None
+    return max(0.0, datetime.now(timezone.utc).timestamp() - float(epoch))
+
+
 def save_settings(settings: dict) -> None:
     """Persist the last settings pulled from the API so they survive a restart
     even if the API is unreachable on the next boot."""
@@ -185,6 +273,13 @@ def resolve_kiosk_id(cfg: dict) -> str:
                         cfg["mqtt_host"] = data["mqtt_host"]
                     if not cfg.get("mqtt_port") and data.get("mqtt_port"):
                         cfg["mqtt_port"] = int(data["mqtt_port"])
+                    record_api_contact(
+                        cfg["api_url"],
+                        last_event="resolve_kiosk_id",
+                        kiosk_id=kid,
+                        agent_version=AGENT_VERSION,
+                        boot_id=BOOT_ID,
+                    )
                     logger.info("Resolved kiosk_id from API: %s", kid)
                     return kid
             logger.warning("Could not resolve kiosk_id (HTTP %s)", r.status_code)
@@ -236,16 +331,22 @@ def _tab_info(tab: dict) -> dict:
     visible/foreground tab. Falls back to unknown values if it can't be read."""
     try:
         r = _cdp_call(tab, "Runtime.evaluate", {
+            # responseStatus is the HTTP status of the main-document navigation
+            # (Chromium >=109); 0/undefined for about:blank, cached, or failed loads,
+            # which we collapse to null so the dashboard can omit the badge.
             "expression": "({age: Math.round((Date.now() - performance.timeOrigin) / 1000),"
-                          " active: document.visibilityState === 'visible'})",
+                          " active: document.visibilityState === 'visible',"
+                          " status: ((performance.getEntriesByType('navigation')[0] || {}).responseStatus) || null})",
             "returnByValue": True,
         })
         val = (((r or {}).get("result") or {}).get("result") or {}).get("value") or {}
         age = val.get("age")
+        status = val.get("status")
         return {"age_seconds": int(age) if age is not None else None,
-                "active": bool(val.get("active"))}
+                "active": bool(val.get("active")),
+                "http_status": int(status) if status else None}
     except Exception:
-        return {"age_seconds": None, "active": False}
+        return {"age_seconds": None, "active": False, "http_status": None}
 
 
 def _get_tabs() -> list[dict]:
@@ -285,7 +386,20 @@ def _cdp_call(tab: dict, method: str, params: dict | None = None) -> dict | None
         return None
 
 
+# Only these URL schemes may be loaded in the kiosk browser. Blocks
+# javascript:, data:, file:, chrome: etc. that could be injected via an MQTT
+# navigate command to run code or read local files in the page context.
+_ALLOWED_URL_SCHEMES = ("http://", "https://", "about:")
+
+
+def is_safe_url(url: str) -> bool:
+    return isinstance(url, str) and url.strip().lower().startswith(_ALLOWED_URL_SCHEMES)
+
+
 def navigate(url: str) -> None:
+    if not is_safe_url(url):
+        logger.warning("navigate: rejected disallowed URL scheme: %r", url)
+        raise ValueError(f"disallowed URL scheme: {url!r}")
     tab = _get_tab()
     if tab:
         _cdp_call(tab, "Page.navigate", {"url": url})
@@ -879,6 +993,36 @@ def _report_detect_log(caps: list[str], probes: dict, hw_info: dict) -> None:
         logger.warning("Failed to report detect log: %s", exc)
 
 
+def _report_comms_state() -> None:
+    """Upload the on-device comms-state file to the API as node meta on demand.
+
+    Stored under the `comms_state` meta key so the dashboard's debug view can pull
+    it back. `reported_at` lets the dashboard tell a fresh upload from a stale one,
+    and `current_api_url` flags which of the per-URL records is the active server.
+    """
+    if not _agent:
+        return
+    records = _load_comms_state()
+    payload = {
+        "reported_at": datetime.now(timezone.utc).isoformat(),
+        "current_api_url": _agent.api_url,
+        "heartbeat_interval_seconds": _agent._hb_interval,
+        "heartbeat_jitter_seconds": _agent._hb_jitter,
+        "records": records,
+    }
+    try:
+        requests.put(
+            f"{_agent.api_url}/agent/meta/comms_state",
+            json={"value": payload},
+            headers={"Authorization": f"Bearer {_agent.api_token}"},
+            timeout=10,
+            verify=TLS_VERIFY,
+        )
+        logger.info("Reported comms state (%d server record(s))", len(records))
+    except Exception as exc:
+        logger.warning("Failed to report comms state: %s", exc)
+
+
 INPUT_MAP = {
     "dp1":   "0x0f",
     "dp2":   "0x10",
@@ -1342,7 +1486,7 @@ def handle_command(payload: bytes) -> None:
             if len(page_tabs) <= 1:
                 if _agent:
                     _agent._stop_playlist()
-                    default_url = _agent.start_url
+                    default_url = _agent.default_url
                 else:
                     default_url = "about:blank"
                 logger.info("close_tab: last tab — navigating to default %s instead of closing", default_url)
@@ -1384,6 +1528,10 @@ def handle_command(payload: bytes) -> None:
         elif command == "navigate_tab":
             tab_id = cmd.get("tab_id", "")
             url = cmd.get("url", "")
+            if url and not is_safe_url(url):
+                logger.warning("navigate_tab: rejected disallowed URL scheme: %r", url)
+                _report_command("navigate_tab", False, f"Disallowed URL scheme: {url}", command_id=command_id)
+                return
             if tab_id and url:
                 try:
                     resp = requests.get(f"{CDP_BASE}/json", timeout=2)
@@ -1436,6 +1584,8 @@ def handle_command(payload: bytes) -> None:
                 _agent._run_capability_detection()
             else:
                 logger.warning("detect_capabilities: agent not ready")
+        elif command == "report_comms_state":
+            _report_comms_state()
         elif command == "reload":
             reload_page()
         elif command == "reboot":
@@ -1534,6 +1684,10 @@ class KioAgent:
         self.topic_prefix: str       = config["topic_prefix"]
         self.features:     list[str] = config["features"]
         self.start_url:    str       = config["start_url"]
+        # The page shown when the node has nothing else to do (boot with no playlist,
+        # last tab closed). Seeded from the local start_url; the global default page
+        # (Settings → Default Page) overrides it once settings are fetched.
+        self.default_url:  str       = self.start_url
         self.command_topic = f"{self.topic_prefix}/kiosks/{self.kiosk_id}/command"
         self.nav_topic     = f"{self.topic_prefix}/kiosks/{self.kiosk_id}/nav"
         self._stop = threading.Event()
@@ -1586,6 +1740,7 @@ class KioAgent:
         playlist = state.get("playlist")
         if not playlist or not playlist.get("items"):
             logger.info("Boot resume: no active playlist to resume")
+            self._show_default_page()
             return
 
         last_idx = playlist.get("last_idx") or 0
@@ -1604,6 +1759,22 @@ class KioAgent:
             start_idx=last_idx,
             refresh_seconds=int(playlist.get("refresh_seconds", PLAYLIST_REFRESH_SECONDS)),
         )
+
+    def _show_default_page(self) -> None:
+        """Show the global default page when the node is idle at boot.
+
+        browser-start already opened the local start_url, so we only override when a
+        global default page (Settings → Default Page) is set and points somewhere
+        else. Waits for Chromium so the navigate lands instead of racing the launch.
+        """
+        url = self.default_url
+        if not url or url in ("about:blank", self.start_url):
+            return  # keep whatever browser-start already opened
+        if not _wait_for_chromium():
+            logger.warning("Default page: Chromium not ready, skipping idle navigate to %s", url)
+            return
+        logger.info("Idle at boot — loading default page %s", url)
+        navigate(url)
 
     def _stop_playlist(self) -> None:
         if self._player is not None:
@@ -1660,6 +1831,14 @@ class KioAgent:
                 capture_output=True, text=True, timeout=30,
             )
             installed = len(certs) - len(invalid)
+            if result.returncode == 0:
+                # update-ca-certificates succeeded (even if some pasted certs were
+                # invalid and skipped) — the trust store was refreshed, so stamp it.
+                record_api_contact(
+                    self.api_url,
+                    last_event="sync_certs",
+                    certs_synced_at=datetime.now(timezone.utc).isoformat(),
+                )
             if result.returncode != 0:
                 err = result.stderr.strip() or "update-certs failed"
                 logger.warning("update-certs failed: %s", err)
@@ -1698,6 +1877,11 @@ class KioAgent:
             )
             if result.returncode == 0:
                 logger.info("Hosts synced: %d entries", len(hosts))
+                record_api_contact(
+                    self.api_url,
+                    last_event="sync_hosts",
+                    hosts_synced_at=datetime.now(timezone.utc).isoformat(),
+                )
             else:
                 logger.warning("Hosts update failed: %s", result.stderr.strip())
         except PermissionError:
@@ -1813,6 +1997,16 @@ class KioAgent:
         except Exception:
             return "unknown"
 
+    def _get_uptime_seconds(self) -> int | None:
+        """System uptime in whole seconds from /proc/uptime, or None if unreadable.
+        Reported on the metadata heartbeat (and on boot); the dashboard extrapolates
+        the live value from this plus the time since it was reported."""
+        try:
+            with open("/proc/uptime") as f:
+                return int(float(f.read().split()[0]))
+        except Exception:
+            return None
+
     def _post_heartbeat(self, online: bool = True, include_metadata: bool = False,
                         include_features: bool = False) -> None:
         # Hardware state (ddcutil/CEC) is slow — only poll on the hourly metadata
@@ -1835,8 +2029,9 @@ class KioAgent:
         if include_features:
             payload["features"] = self.features
         if include_metadata:
-            payload["device_type"] = self._get_device_type()
-            payload["ip_address"]  = self._get_ip_address()
+            payload["device_type"]    = self._get_device_type()
+            payload["ip_address"]     = self._get_ip_address()
+            payload["uptime_seconds"] = self._get_uptime_seconds()
             logger.info(
                 "Heartbeat [full] online=%s url=%s input=%s display=%s features=%s device=%s ip=%s",
                 online,
@@ -1864,7 +2059,18 @@ class KioAgent:
                 verify=TLS_VERIFY,
             )
             if resp.status_code == 204:
-                logger.info("Heartbeat OK")
+                gap = seconds_since_last_contact(self.api_url)
+                record_api_contact(
+                    self.api_url,
+                    last_event="heartbeat",
+                    kiosk_id=self.kiosk_id,
+                    agent_version=AGENT_VERSION,
+                    boot_id=BOOT_ID,
+                )
+                if gap is not None:
+                    logger.info("Heartbeat OK (%.0fs since last contact)", gap)
+                else:
+                    logger.info("Heartbeat OK")
             else:
                 logger.warning("Heartbeat FAILED: HTTP %s", resp.status_code)
         except Exception as exc:
@@ -1887,6 +2093,11 @@ class KioAgent:
         state = _load_hw_state()
         state["display_fingerprint"] = _display_fingerprint()
         _save_hw_state(state)
+        record_api_contact(
+            self.api_url,
+            last_event="detect_capabilities",
+            hardware_detect_at=datetime.now(timezone.utc).isoformat(),
+        )
         logger.info("Capabilities detected and reported: %s", caps)
 
     def _check_display_drift(self) -> None:
@@ -1951,6 +2162,8 @@ class KioAgent:
         self._hb_jitter         = max(0,  int(s.get("heartbeat_jitter_seconds", self._hb_jitter)))
         self._metadata_interval = max(60, int(s.get("metadata_interval_seconds", self._metadata_interval)))
         self._settings_checkin  = max(30, int(s.get("settings_checkin_seconds", self._settings_checkin)))
+        # Global default page overrides the local start_url when set; falls back to it otherwise.
+        self.default_url = s.get("default_url") or self.start_url
         logger.info(
             "Applied settings from %s: heartbeat=%ds jitter=%ds metadata=%ds checkin=%ds",
             source, self._hb_interval, self._hb_jitter, self._metadata_interval, self._settings_checkin,
@@ -2142,10 +2355,12 @@ class KioAgent:
 
 if __name__ == "__main__":
     cfg = load_config()
-    TLS_VERIFY = cfg["tls_verify"]
-    if not TLS_VERIFY:
+    TLS_VERIFY = resolve_tls_verify(cfg["tls_verify"])
+    if TLS_VERIFY is False:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         logger.warning("TLS verification disabled — all API requests will skip cert checks")
+    elif isinstance(TLS_VERIFY, str):
+        logger.info("TLS verification using CA bundle: %s", TLS_VERIFY)
     logger.info("Loaded config from %s — will communicate with API at %s", CONFIG_FILE, cfg["api_url"])
     # Resolve the node id from the API via the token (so config need not carry it).
     cfg["kiosk_id"] = resolve_kiosk_id(cfg)

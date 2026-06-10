@@ -2,9 +2,11 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.auth import refresh_jwks, require_dashboard_auth
 from app.config import settings
@@ -56,14 +58,34 @@ async def lifespan(app: FastAPI):
     stop_mqtt()
 
 
-app = FastAPI(title="kio", lifespan=lifespan)
+app = FastAPI(
+    title="kio",
+    lifespan=lifespan,
+    docs_url="/docs" if settings.docs_enabled else None,
+    redoc_url="/redoc" if settings.docs_enabled else None,
+    openapi_url="/openapi.json" if settings.docs_enabled else None,
+)
 
+_FAVICON_PATH = Path(__file__).parent / "static" / "favicon.svg"
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(_FAVICON_PATH, media_type="image/svg+xml")
+
+# CORS is only exercised when the UI is served from a different origin than the
+# API. In every standard deployment the UI reaches the API same-origin via a
+# proxy (Vite '/api' in dev, nginx '/api/' in prod/Docker), so CORS never fires.
+# It therefore stays locked down: no credentials (auth is a Bearer header, not a
+# cookie), and an explicit method/header allow-list. Cross-origin setups must add
+# their UI origin to CORS_ORIGINS.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
     expose_headers=["X-Total-Count"],
 )
 
@@ -84,7 +106,7 @@ app.include_router(kiosks.router, dependencies=_dashboard_auth)
 app.include_router(tokens.router, dependencies=_dashboard_auth)
 app.include_router(auth.router)  # public — issues dev tokens
 app.include_router(agent.router)  # authenticated separately via NodeToken
-app.include_router(sse.router, dependencies=_dashboard_auth)
+app.include_router(sse.router)  # ticket-issue route is authed; stream is ticket-gated
 app.include_router(playlists.router, dependencies=_dashboard_auth)
 app.include_router(feature_flags.router, dependencies=_dashboard_auth)
 app.include_router(agent_settings.router, dependencies=_dashboard_auth)
@@ -95,7 +117,7 @@ app.include_router(node_settings.router, dependencies=_dashboard_auth)
 app.include_router(certificates.router, dependencies=_dashboard_auth)
 
 
-@app.get("/_migrations")
+@app.get("/_migrations", dependencies=_dashboard_auth)
 async def migrations() -> dict:
     from pathlib import Path
 

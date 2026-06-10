@@ -48,78 +48,116 @@ Copy each token value when it's displayed — it won't be shown again.
 
 ## Step 3 — Add deploy tasks to the Taskfile (optional)
 
-Add tasks to `Taskfile.yml` modelled on the existing `kio-2` tasks. The deploy task scps agent code and node-specific configs directly to their target locations.
+Add tasks to `Taskfile.yaml` modelled on the existing `kio-2`/`kio-3` tasks. They delegate to the shared, variabilized `_kio:*` tasks, so you only set the hostname and which config file to push:
 
 ```yaml
-  kio-3:deploy:
-    desc: Deploy pi-agent to kio-3 and restart the agent service
+  kio-3:setup:
+    desc: First-time setup of kio-3 — install with the dev config
     cmds:
-      - ssh kio-3 "mkdir -p ~/kio/pi-agent"
-      - scp -r src/pi-agent/. kio-3:~/kio/pi-agent && scp VERSION kio-3:~/kio/pi-agent/VERSION
-      - ssh kio-3 "sudo cp ~/kio/pi-agent/agent.py ~/kio/pi-agent/VERSION /opt/kio-agent/"
-      - scp configs/agents/kio-3-kanshi-config kio-3:~/.config/kanshi/config
-      - ssh kio-3 "printf 'pkill wf-panel-pi\nunclutter-xfixes --timeout 1 &\n~/kio/pi-agent/scripts/browser-start\n' > ~/.config/labwc/autostart && chmod +x ~/.config/labwc/autostart"
-      - scp configs/agents/kio-3-hosts kio-3:/tmp/kio-hosts
-      - ssh kio-3 "sudo sed -i '/# KIO-HOSTS/,/# END KIO-HOSTS/d' /etc/hosts && sudo bash -c 'cat /tmp/kio-hosts >> /etc/hosts'"
-      - ssh kio-3 "sudo systemctl restart kio-agent"
+      - task: _kio:install
+        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.dev.yaml}
+
+  kio-3:deploy:
+    desc: Deploy kio-3 — scp local source, run setup.sh (keeps config), restart
+    cmds:
+      - task: _kio:install
+        vars: {HOST: kio-3}
 
   kio-3:dev:
     desc: Push dev config to kio-3 and restart the agent
     cmds:
-      - scp configs/agents/kio-3-kiosk.dev.yaml kio-3:/etc/kio/kiosk.yaml
-      - ssh kio-3 "sudo systemctl restart kio-agent"
-      - echo "kio-3 -> dev"
-
-  kio-3:logs:
-    desc: Stream agent logs from kio-3
-    cmds:
-      - ssh kio-3 "sudo journalctl -fu kio-agent"
+      - task: _kio:config
+        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.dev.yaml}
 
   kio-3:prd:
     desc: Push prod config to kio-3 and restart the agent
     cmds:
-      - scp configs/agents/kio-3-kiosk.prd.yaml kio-3:/etc/kio/kiosk.yaml
-      - ssh kio-3 "sudo systemctl restart kio-agent"
-      - echo "kio-3 -> prd"
+      - task: _kio:config
+        vars: {HOST: kio-3, CONFIG: configs/agents/kio-3-kiosk.prd.yaml}
 
-  kio-3:release-prd:
-    desc: Deploy current agent files to kio-3 and switch to prod config
+  kio-3:logs:
+    desc: Stream agent logs from kio-3
     cmds:
-      - task: kio-3:deploy
-      - task: kio-3:prd
+      - task: _kio:logs
+        vars: {HOST: kio-3}
 ```
+
+`_kio:install` SCPs `src/pi-agent/.` to the node and runs `setup.sh --local` (never pulls from git).
 
 ---
 
 ## Step 5 — Run setup on the Pi
 
-SSH into the Pi and run the setup script directly from GitHub:
+The simplest path is the Taskfile (after Step 3 and creating `configs/agents/kio-3-kiosk.dev.yaml`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/bootstrap/src/pi-agent/setup.sh | bash -s -- --env dev
+task kio-3:setup
 ```
 
-The script will prompt for:
-- **Cluster gateway IP** — the IP of the host serving the kio API/UI hostnames (written to `/etc/hosts` so they resolve)
-- **API URL** — pre-filled from `--env dev` or `--env prd`; press Enter to accept
-- **Node token** — paste the token from Step 2
-
-Or pass everything non-interactively:
+Or run `setup.sh` on the Pi directly. SSH in, then either copy the `src/pi-agent/` folder over and run it with `--local`, or pull it from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/bootstrap/src/pi-agent/setup.sh \
-  | bash -s -- --env dev --gateway-ip 192.168.1.10 --token kio_...
+# from copied source (recommended — no internet needed):
+cd /path/to/src/pi-agent && sudo bash setup.sh --local --api-url https://<your-api> --token kio_...
+
+# or bootstrap from GitHub (clones the repo, defaults to the main branch):
+curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/main/src/pi-agent/setup.sh \
+  | sudo bash -s -- --api-url https://<your-api> --token kio_...
 ```
 
-The script fetches the full source tree, installs system packages, writes `/etc/kio/kiosk.yaml` (config pulled from the API via the token), installs the agent to `/opt/kio-agent/`, enables the systemd service, and configures auto-login.
+If you don't pass `--api-url`/`--token`, the script prompts for them (only those two). See [API certificate (TLS) options](#api-certificate-tls-options) below for the cert flag to add (`--accept-cert` is typical for a private cert).
 
-**Reboot to apply all changes** (required for the `i2c` group to take effect):
+> `--env dev` / `--env prd` is optional: it tags the installed config as that environment (saved on the Pi as `/etc/kio/kiosk.<env>.yaml`) so you can switch between them later with `task <node>:dev` / `task <node>:prd`. It does **not** pre-fill the API URL.
+
+The script installs system packages, writes `/etc/kio/kiosk.yaml`, installs the agent to `/opt/kio-agent/`, enables the systemd service, configures the labwc graphical autostart, and turns on auto-login.
+
+**Reboot to apply all changes:**
 
 ```bash
 sudo reboot
 ```
 
-After reboot the agent starts automatically and begins sending heartbeats. The kiosk should appear **online** in the dashboard within 30 seconds.
+A reboot is required for the HDMI cmdline (`video=HDMI-A-1`), `hdmi_force_hotplug`, and the `i2c` group change (display power / input switching). After reboot the agent starts automatically and begins sending heartbeats — the kiosk should appear **online** in the dashboard within 30 seconds.
+
+---
+
+## API certificate (TLS) options
+
+If your kio API is served over HTTPS, the Pi has to trust the API's certificate before it can talk to it securely. What you do depends on the kind of certificate the API uses:
+
+| Your API's certificate | What to do | Add to the setup command |
+|------------------------|-----------|--------------------------|
+| Public certificate (Let's Encrypt, etc.) | Nothing — it's trusted automatically | *(nothing)* |
+| Private / self-signed certificate | Trust it on first connect and remember it | `--accept-cert` |
+| You already have the CA file | Provide it so it's trusted from the start | `--ca-cert /path/to/ca.crt` |
+| Plain HTTP, or just testing | Skip the security check | `--insecure-tls` |
+
+Most self-hosted setups use a private certificate — use **`--accept-cert`**. During setup it downloads the API's certificate, saves it on the Pi, and prints a **fingerprint** (a `Leaf SHA-256:` line). Compare that fingerprint against your API's real certificate before continuing — that confirms nothing tampered with the connection. From then on the agent trusts only that exact certificate.
+
+```bash
+sudo bash setup.sh --accept-cert --api-url https://your-api.example.local --token kio_...
+```
+
+> **"Reachable but its TLS certificate is not trusted"** — if setup stops with this message, it's this step. Re-run with one of the options above.
+
+If you'd rather not have setup download its source from the internet, copy the `src/pi-agent/` folder to the Pi yourself and add `--local` — setup then runs only from those files and never touches git.
+
+---
+
+## Internal API hostnames (custom DNS)
+
+If your API URL is an internal name like `https://api.kio.example.local` (rather than a public domain), the Pi needs a DNS server that knows that name — otherwise setup fails to resolve/reach the API. Point the Pi at a DNS server that can resolve it (for example a **Pi-hole**) with `--dns`:
+
+```bash
+sudo bash setup.sh --dns 192.168.50.2 --accept-cert \
+  --api-url https://api.kio.example.local --token kio_...
+```
+
+- Comma-separate multiple servers: `--dns 192.168.50.2,1.1.1.1`.
+- Run with a terminal attached and setup will **prompt** for a custom DNS server (leave blank to keep the Pi's current DNS).
+- The setting is applied so it survives reboots.
+
+If your API URL is a plain IP address (e.g. `http://192.168.50.182:8000`), you don't need this.
 
 ---
 
@@ -148,7 +186,7 @@ task kio-3:logs
 You should see:
 
 ```
-Connected to MQTT at 192.168.1.100:1883
+Connected to MQTT at 192.168.50.86:1883   # the mqtt.host from your config
 Sending metadata heartbeat
 kio agent running (kiosk_id=...)
 ```
@@ -172,12 +210,13 @@ Default flags applied:
 
 ## Node config file reference
 
-| File | Committed | Purpose |
-|---|---|---|
-| `kio-3-kiosk.dev.yaml` | No | API URL, token, MQTT settings for dev |
-| `kio-3-kiosk.prd.yaml` | No | API URL, token, MQTT settings for prod |
-| `kio-3-kanshi-config` | Yes | Monitor output profile |
-| `kio-3-hosts` | Yes | Local DNS entries injected into `/etc/hosts` |
+Config files live in `configs/agents/` (not committed — they contain node tokens):
+
+| File | Purpose |
+|---|---|
+| `kio-3-kiosk.dev.yaml` | API URL, token, MQTT settings for dev |
+| `kio-3-kiosk.prd.yaml` | API URL, token, MQTT settings for prod |
+| `example-config.yaml` | Template to copy when adding a new node |
 
 ---
 
@@ -192,9 +231,9 @@ task kio-3:logs
 Verify the token in `configs/agents/kio-3-kiosk.dev.yaml` matches what was created in the dashboard. Tokens are shown only once — if lost, revoke it and create a new one.
 
 **MQTT not connecting:**
-Check `topic_prefix` in `kio-3-kiosk.dev.yaml` is `kio/dev`. Confirm the broker at `192.168.1.100:1883` is reachable from the Pi:
+Check `topic_prefix` in `kio-3-kiosk.dev.yaml` is `kio/dev`. Confirm the broker (the `mqtt.host`/`mqtt.port` in your config) is reachable from the Pi:
 ```bash
-ssh kio-3 "nc -zv 192.168.1.100 1883"
+ssh kio-3 "nc -zv <mqtt-host> 1883"
 ```
 
 **Wrong config active:**
