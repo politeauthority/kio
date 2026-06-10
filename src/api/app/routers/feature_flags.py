@@ -9,7 +9,8 @@ from app.models.feature_flag import FeatureFlag
 router = APIRouter(prefix="/settings/feature-flags", tags=["settings"])
 
 KNOWN_FLAGS: dict[str, bool] = {
-    "browser_management": True,
+    # browser_management graduated to always-on — the Browsers section is a core
+    # feature now, no longer gated behind a flag.
     "playlists": True,
     "debug": True,
     "import_certs": False,

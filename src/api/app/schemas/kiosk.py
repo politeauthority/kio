@@ -30,6 +30,8 @@ class KioskRead(BaseModel):
     current_input: str | None
     display_on: bool | None
     agent_version: str | None
+    uptime_seconds: int | None
+    uptime_reported_at: datetime | None
     playlist_id: uuid.UUID | None
     meta: dict
     browser_flags: list[str]

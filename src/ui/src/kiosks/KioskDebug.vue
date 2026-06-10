@@ -222,6 +222,46 @@
       </div>
     </div>
 
+    <!-- Comms State -->
+    <div class="card mt-lg">
+      <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0">
+        <span>Comms State</span>
+        <button class="btn btn-secondary" style="padding: 0.25rem 0.75rem; font-size: 0.8rem"
+          :disabled="requestingComms || blocked" @click="requestComms">
+          {{ requestingComms ? 'Requesting…' : 'Request from Node' }}
+        </button>
+      </div>
+      <p class="text-xs text-muted" style="margin-top: 0.4rem; margin-bottom: 1rem">
+        Asks the node to upload its on-device <code>comms-state.json</code> — the per-API-server record of when it last reached each server. Responds within ~15s.
+      </p>
+      <div v-if="!commsState" class="text-sm text-muted">
+        No comms state retrieved yet — click <strong>Request from Node</strong> to pull it from the device.
+      </div>
+      <template v-else>
+        <div style="display: grid; grid-template-columns: minmax(0, 460px) minmax(0, 1fr); gap: 1.5rem; align-items: start">
+          <table class="debug-table">
+            <tbody>
+              <tr><td>Retrieved</td><td>{{ commsRetrievedAt ? fmt(commsRetrievedAt) : '— (from a previous request)' }}</td></tr>
+              <tr><td>Node Reported</td><td>{{ fmt(commsState.reported_at) }}</td></tr>
+              <tr v-if="commsState.current_api_url"><td>Active API</td><td><code style="font-size: 0.75rem">{{ commsState.current_api_url }}</code></td></tr>
+              <tr v-if="commsState.heartbeat_interval_seconds != null">
+                <td>Heartbeat</td>
+                <td>
+                  {{ commsState.heartbeat_interval_seconds }}s
+                  <span v-if="commsState.heartbeat_jitter_seconds" class="text-muted text-xs">(±{{ commsState.heartbeat_jitter_seconds }}s jitter)</span>
+                </td>
+              </tr>
+              <tr><td>Hosts Synced</td><td>{{ fmt(activeRecord.hosts_synced_at) }}</td></tr>
+              <tr><td>Certs Synced</td><td>{{ fmt(activeRecord.certs_synced_at) }}</td></tr>
+              <tr><td>HW Detect</td><td>{{ fmt(activeRecord.hardware_detect_at) }}</td></tr>
+              <tr v-if="activeRecord.last_contact_at"><td>Last Contact</td><td>{{ fmt(activeRecord.last_contact_at) }}</td></tr>
+            </tbody>
+          </table>
+          <pre style="margin: 0; font-size: 0.75rem; overflow-x: auto; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; background: var(--bg-dark); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem">{{ JSON.stringify(commsState.records ?? commsState, null, 2) }}</pre>
+        </div>
+      </template>
+    </div>
+
     <!-- Raw JSON -->
     <div class="card mt-lg">
       <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; cursor: pointer" @click="showRaw = !showRaw">
@@ -251,7 +291,7 @@ const kioskId = computed(() => route.params.id)
 const { pendingCommand, blocked, refresh: refreshPending } = usePendingCommand(kioskId)
 
 watch(() => pendingCommand.value?.id, (id) => {
-  if (id) {
+  if (id && blocked.value) {
     toast.add(`Commands paused — waiting for "${pendingCommand.value.command}" to finish`, 'warning')
   }
 })
@@ -260,8 +300,19 @@ const detectLog = ref(null)
 const loading = ref(true)
 const detecting = ref(false)
 const showRaw = ref(false)
+const commsState = ref(null)
+const commsRetrievedAt = ref(null)
+const requestingComms = ref(false)
 
 const hw = computed(() => kiosk.value?.meta?.hardware_info ?? {})
+
+// The per-API-URL record for the server the node is currently reporting to —
+// hosts/certs sync times live here (kept per-server since dev nodes switch APIs).
+const activeRecord = computed(() => {
+  const cs = commsState.value
+  if (!cs) return {}
+  return cs.records?.[cs.current_api_url] ?? {}
+})
 
 const ALL_CAPS = [
   {
@@ -298,6 +349,8 @@ async function load() {
       apiFetch(`/kiosks/${kioskId.value}`),
       apiFetch(`/kiosks/${kioskId.value}/hardware-detect-log`).catch(() => null),
     ])
+    // Surface any comms state from a prior request (retrieval time unknown, so left blank).
+    commsState.value = kiosk.value?.meta?.comms_state ?? null
   } catch {
     toast.add('Failed to load kiosk', 'error')
   } finally {
@@ -341,6 +394,51 @@ async function detect() {
   } catch {
     toast.add('Failed to start detection', 'error')
     detecting.value = false
+  }
+}
+
+async function requestComms() {
+  if (blocked.value) {
+    toast.add(`Wait for "${pendingCommand.value.command}" to finish first`, 'info')
+    return
+  }
+  requestingComms.value = true
+  toast.add('Requesting comms state from node…', 'info')
+  try {
+    // Compare against the previously reported value rather than wall-clock time:
+    // reported_at is stamped by the node's clock, so any skew between the Pi and
+    // the dashboard would make a fresh upload look stale. A changed value is an
+    // unambiguous "the node just answered".
+    const prevReportedAt = kiosk.value?.meta?.comms_state?.reported_at ?? null
+    await apiFetch(`/kiosks/${kioskId.value}/command`, {
+      method: 'POST',
+      body: JSON.stringify({ command: 'report_comms_state' }),
+    })
+    await refreshPending()
+    let attempts = 0
+    const poll = setInterval(async () => {
+      attempts++
+      try {
+        const k = await apiFetch(`/kiosks/${kioskId.value}`)
+        const cs = k.meta?.comms_state
+        const isNew = cs?.reported_at && cs.reported_at !== prevReportedAt
+        if (isNew || attempts >= 15) {
+          clearInterval(poll)
+          requestingComms.value = false
+          if (isNew) {
+            kiosk.value = k
+            commsState.value = cs
+            commsRetrievedAt.value = new Date()
+            toast.add('Comms state retrieved', 'success')
+          } else {
+            toast.add('No response from node — agent may be offline', 'warning')
+          }
+        }
+      } catch { clearInterval(poll); requestingComms.value = false }
+    }, 2000)
+  } catch {
+    toast.add('Failed to request comms state', 'error')
+    requestingComms.value = false
   }
 }
 

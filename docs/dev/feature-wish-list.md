@@ -1,7 +1,7 @@
 # Feature List
 ## Pi Management
-- [ ] Update hosts file
-- [ ] Import certificates
+- [x] Update hosts file
+- [x] Import certificates
 - [ ] Better Playlist Setup
   - [ ] show progress of playlist running (in progress)
   - [ ] Pre load brower tabs (in progress)

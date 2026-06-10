@@ -10,4 +10,7 @@ const SHOW_FEATURE_FLAGS =
     ? _rawShowFF === 'True'
     : import.meta.env.VITE_SHOW_FEATURE_FLAGS === 'True'
 
-export { API_URL, KIO_BRANCH, SHOW_FEATURE_FLAGS }
+// True when served by the Vite dev server (`task dev:ui`), false in any built image.
+const IS_LOCAL = import.meta.env.DEV
+
+export { API_URL, KIO_BRANCH, SHOW_FEATURE_FLAGS, IS_LOCAL }

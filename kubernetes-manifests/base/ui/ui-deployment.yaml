@@ -12,15 +12,28 @@ spec:
       labels:
         app: kio-ui
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       imagePullSecrets:
         - name: harbor-registry
       containers:
         - name: kio-ui
           image: harbor.squid-ink.us/politeauthority/kio-ui:latest
           imagePullPolicy: Always
+          # Image is nginxinc/nginx-unprivileged: master + workers run as uid 101
+          # and listen on :8080. readOnlyRootFilesystem is intentionally NOT set —
+          # the entrypoint rewrites runtime config into index.html on start.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
-              containerPort: 80
+              containerPort: 8080
           env:
             - name: API_URL
               value: /api
@@ -36,6 +49,6 @@ spec:
           livenessProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 30

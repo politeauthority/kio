@@ -157,6 +157,7 @@ ALLOWED_COMMANDS = {
     "detect_capabilities",
     "sync_browser_flags",
     "sync_hosts",
+    "report_comms_state",
 }
 
 ALLOWED_INPUTS = {"dp1", "dp2", "hdmi1", "hdmi2"}

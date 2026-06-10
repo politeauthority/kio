@@ -1,17 +1,88 @@
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1
 
-ARG VERSION=dev
-ENV KIO_VERSION=$VERSION
+# Multi-stage build for the kio API.
+#   builder     -> resolve runtime deps into an isolated, lockfile-pinned venv
+#   runtime     -> minimal, non-root layer with the venv + app + migrations
+#   test        -> runtime + dev deps + tests (build with `--target test`)
+#   production  -> final, smallest image (default target)
+#
+# Build prod:  docker build -f docker/Dockerfile.api -t kio-api .
+# Build test:  docker build -f docker/Dockerfile.api --target test -t kio-api:test .
+
+ARG PYTHON_VERSION=3.12-slim
+
+############################################################
+# builder — runtime dependencies only, into /opt/venv
+############################################################
+FROM python:${PYTHON_VERSION} AS builder
+
+# Pinned uv (matches the version that generated uv.lock) for reproducible installs.
+COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /usr/local/bin/uv
+
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_COMPILE_BYTECODE=1
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir uv
+# Only the dependency manifests, so this layer caches until deps actually change.
+COPY src/api/pyproject.toml src/api/uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
 
-# Install runtime deps from pyproject.toml system-wide (no lockfile, no venv).
-# tomllib (stdlib 3.11+) reads the dep list so pyproject.toml stays the single source of truth.
-COPY src/api/pyproject.toml .
-RUN python3 -c "import tomllib,subprocess; deps=tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; subprocess.run(['uv','pip','install','--system','--no-cache']+deps,check=True)"
+############################################################
+# runtime — shared minimal base (non-root, app + migrations)
+############################################################
+FROM python:${PYTHON_VERSION} AS runtime
 
-COPY src/api/ .
+ARG VERSION=dev
+ENV KIO_VERSION=$VERSION \
+    PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
+# Dedicated unprivileged user; uid/gid 1000 matches the k8s securityContext.
+RUN groupadd --system --gid 1000 app \
+ && useradd --system --uid 1000 --gid app --home-dir /app --no-create-home app
+
+WORKDIR /app
+
+# The resolved dependency tree (read-only at runtime).
+COPY --from=builder /opt/venv /opt/venv
+
+# Application code + Alembic migrations (the migrate Job runs `alembic upgrade head`).
+COPY src/api/app ./app
+COPY src/api/alembic ./alembic
+COPY src/api/alembic.ini ./
+
+USER app
+
+############################################################
+# test — runtime + dev dependencies + test suite
+#   Non-production only: `docker build --target test ...`
+############################################################
+FROM runtime AS test
+
+USER root
+COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /usr/local/bin/uv
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+# Layer the dev group (pytest, ruff, black, ...) onto the existing venv.
+COPY src/api/pyproject.toml src/api/uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project
+COPY src/api/tests ./tests
+
+USER app
+CMD ["pytest", "-q"]
+
+############################################################
+# production — final image (default target, smallest surface)
+############################################################
+FROM runtime AS production
+
+EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -30,12 +30,9 @@
             <div class="text-xs text-muted" style="margin-bottom: 4px">STATUS</div>
             <span class="status-badge" :class="`status-${liveStatus}`">{{ liveStatus }}</span>
           </div>
-          <div>
-            <div class="text-xs text-muted" style="margin-bottom: 4px">CURRENT URL</div>
-            <a v-if="liveUrl" :href="liveUrl" target="_blank" rel="noopener" class="text-sm" style="word-break: break-all">
-              {{ liveUrl }}
-            </a>
-            <span v-else class="text-muted text-sm">—</span>
+          <div v-if="kiosk.device_type">
+            <div class="text-xs text-muted" style="margin-bottom: 4px">MODEL</div>
+            <span class="text-sm">{{ kiosk.device_type }}</span>
           </div>
           <div v-if="kiosk.ip_address">
             <div class="text-xs text-muted" style="margin-bottom: 4px">IP ADDRESS</div>
@@ -48,6 +45,10 @@
           <div>
             <div class="text-xs text-muted" style="margin-bottom: 4px">LAST SEEN</div>
             <span class="text-sm text-muted">{{ formatLastSeen(kiosk.last_seen) }}</span>
+          </div>
+          <div>
+            <div class="text-xs text-muted" style="margin-bottom: 4px">UPTIME</div>
+            <span class="text-sm" :class="uptimeDisplay === 'Unknown' ? 'text-muted' : ''">{{ uptimeDisplay }}</span>
           </div>
         </div>
       </div>
@@ -136,42 +137,57 @@
     </div>
 
     <!-- Browser Tabs card -->
-    <div v-if="featureFlags.isEnabled('browser_management')" class="card mt-lg">
+    <div class="card mt-lg">
       <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0">
         <span>Browser Tabs</span>
-        <span class="text-xs text-muted">{{ liveTabs.length }} tab{{ liveTabs.length === 1 ? '' : 's' }}</span>
+        <span class="text-xs text-muted">{{ displayTabs.length }} tab{{ displayTabs.length === 1 ? '' : 's' }}</span>
       </div>
 
-      <div v-if="liveTabs.length === 0" class="text-muted text-sm" style="margin-top: 0.75rem">
+      <div v-if="displayTabs.length === 0" class="text-muted text-sm" style="margin-top: 0.75rem">
         No open tabs — kiosk may be offline or CDP unavailable.
       </div>
 
       <div v-else style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem">
         <div
-          v-for="tab in liveTabs"
+          v-for="tab in displayTabs"
           :key="tab.id"
           style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-radius: var(--radius); border: 1px solid var(--border)"
-          :style="tab.active
+          :style="isTabActive(tab)
             ? 'background: var(--accent-subtle, rgba(99,102,241,0.12)); border-color: var(--accent)'
             : 'background: var(--bg-dark)'"
         >
           <div style="flex: 1; min-width: 0">
             <div class="text-sm" style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">
-              {{ savedUrlFor(tab.url)?.name || tab.title || '(no title)' }}
+              {{ savedUrlFor(tab.url)?.name || tab.title || (tab.pending ? 'Opening…' : '(no title)') }}
             </div>
-            <div class="text-xs text-muted" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis" :title="tab.url">
-              {{ truncateUrl(tab.url) }}
+            <div class="text-xs text-muted" style="display: flex; align-items: center; gap: 0.4rem; min-width: 0" :title="tab.url">
+              <span v-if="tab.http_status" :style="statusBadgeStyle(tab.http_status)">{{ tab.http_status }}</span>
+              <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0">{{ truncateUrl(tab.url) }}</span>
             </div>
-            <div v-if="tab.age_seconds != null" class="text-xs text-muted" style="margin-top: 2px">
+            <div v-if="!tab.pending && pendingRefreshTabs[tab.id]" class="text-xs text-muted" style="margin-top: 2px; display: flex; align-items: center; gap: 0.4rem">
+              <span class="kio-spinner" style="width: 0.7rem; height: 0.7rem"></span>
+              refreshing…
+            </div>
+            <div v-else-if="!tab.pending && tab.age_seconds != null" class="text-xs text-muted" style="margin-top: 2px">
               refreshed {{ fmtAge(tabAge(tab)) }} ago
             </div>
           </div>
           <div class="d-flex gap-sm" style="flex-shrink: 0; align-items: center">
-            <span v-if="tab.active" style="color: var(--accent); font-size: 0.7rem; white-space: nowrap; margin-right: 0.25rem">● ON SCREEN</span>
-            <RouterLink v-if="savedUrlFor(tab.url)" :to="`/urls/${savedUrlFor(tab.url).id}/edit`" class="btn btn-ghost" style="padding: 0.2rem 0.5rem; font-size: 0.8rem; color: var(--text-muted)">Edit URL</RouterLink>
-            <button class="btn btn-secondary" style="padding: 0.2rem 0.6rem; font-size: 0.8rem" :disabled="commandsBlocked" @click="activateTab(tab.id)">Focus</button>
-            <button class="btn btn-secondary" style="padding: 0.2rem 0.6rem; font-size: 0.8rem" :disabled="commandsBlocked" @click="refreshTab(tab.id)">↻ Refresh</button>
-            <button class="btn btn-ghost" style="padding: 0.2rem 0.6rem; font-size: 0.8rem; color: var(--danger)" :disabled="commandsBlocked" @click="closeTab(tab.id)" title="Close tab (or reset to default if it's the last one)">✕</button>
+            <template v-if="tab.pending">
+              <span class="kio-spinner" style="width: 0.9rem; height: 0.9rem"></span>
+              <span class="text-xs text-muted" style="white-space: nowrap">waiting for node…</span>
+            </template>
+            <template v-else>
+              <span v-if="tab.id === pendingFocusTabId" style="display: flex; align-items: center; gap: 0.4rem; color: var(--text-muted); font-size: 0.7rem; white-space: nowrap; margin-right: 0.25rem">
+                <span class="kio-spinner" style="width: 0.75rem; height: 0.75rem"></span>
+                focusing…
+              </span>
+              <span v-else-if="isTabActive(tab)" style="color: var(--accent); font-size: 0.7rem; white-space: nowrap; margin-right: 0.25rem">● ON SCREEN</span>
+              <RouterLink v-if="savedUrlFor(tab.url)" :to="`/urls/${savedUrlFor(tab.url).id}/edit`" class="btn btn-ghost" style="padding: 0.2rem 0.5rem; font-size: 0.8rem; color: var(--text-muted)">Edit URL</RouterLink>
+              <button class="btn btn-secondary" style="padding: 0.2rem 0.6rem; font-size: 0.8rem" :disabled="commandsBlocked" @click="activateTab(tab.id)">Focus</button>
+              <button class="btn btn-secondary" style="padding: 0.2rem 0.6rem; font-size: 0.8rem" :disabled="commandsBlocked" @click="refreshTab(tab.id)">↻ Refresh</button>
+              <button class="btn btn-ghost" style="padding: 0.2rem 0.6rem; font-size: 0.8rem; color: var(--danger)" :disabled="commandsBlocked" @click="closeTab(tab.id)" title="Close tab (or reset to default if it's the last one)">✕</button>
+            </template>
           </div>
         </div>
       </div>
@@ -351,8 +367,8 @@ import { RouterLink, useRoute } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { useToastStore } from '../stores/toast'
 import { useFeatureFlagsStore } from '../stores/featureFlags'
+import { isCommandFresh } from '../composables/usePendingCommand'
 import { API_URL } from '../config'
-import { getAccessToken } from '../auth'
 import UrlTypeahead from '../urls/UrlTypeahead.vue'
 
 const { apiFetch } = useApi()
@@ -370,12 +386,27 @@ const liveStatus = ref(null)
 const liveUrl = ref(null)
 const liveInput = ref(null)
 const liveDisplayOn = ref(null)
+const liveUptimeSeconds = ref(null)
+const liveUptimeReportedAt = ref(null)
 const liveTabs = ref([])
 const newTabUrl = ref('')
+// Optimistic placeholders for tabs the user just opened, shown immediately while
+// we wait for the agent to report the real tab (with title/active/age) back.
+const pendingTabs = ref([])
+// Id of a tab the user just hit Focus on — shown as active (with a spinner) until
+// the agent confirms it's the on-screen tab.
+const pendingFocusTabId = ref(null)
+let pendingFocusAt = 0
+// Map of tabId -> click time (ms) for tabs the user just hit Refresh on — shown as
+// "refreshing…" until the agent reports a last-reload newer than the click.
+const pendingRefreshTabs = ref({})
 let sse = null
 let logPollInterval = null
 let countdownInterval = null
 let pollInterval = null
+let tabPollInterval = null
+let pendingTabSeq = 0
+const PENDING_TAB_TIMEOUT_MS = 30000
 // Wall-clock (ms) of the last tab snapshot, so "refreshed Xs ago" ticks up
 // smoothly between the agent's ~30s updates instead of jumping.
 const tabsUpdatedAt = ref(Date.now())
@@ -392,16 +423,21 @@ const countdownTick = ref(0)
 
 // A command the agent hasn't acknowledged yet (status 'pending'). The log is
 // sorted newest-first, so this is the most recent outstanding command. We block
-// new commands while one is pending so they don't back up the agent's queue;
-// the API ages a stale pending command to "no_response" after 2 min, so a missed
-// command never locks the controls permanently.
+// new commands while one is pending so they don't back up the agent's queue —
+// but only briefly (COMMAND_BLOCK_WINDOW_MS via isCommandFresh), so an offline or
+// slow node can't lock the controls until the server ages it to "no_response"
+// (2 min). countdownTick (1s) drives the time-based re-evaluation.
 const pendingCommand = computed(() => commandLog.value.find(e => e.status === 'pending') || null)
-const commandsBlocked = computed(() => commanding.value || pendingCommand.value !== null)
+const commandsBlocked = computed(() => {
+  if (commanding.value) return true
+  void countdownTick.value
+  return pendingCommand.value !== null && isCommandFresh(pendingCommand.value.sent_at, Date.now())
+})
 
 // Surface the pause as a toast (instead of an inline banner) and clear it when the
 // command resolves. Keyed by command id so re-sends re-notify.
 watch(() => pendingCommand.value?.id, (id) => {
-  if (id) {
+  if (id && commandsBlocked.value) {
     toast.add(`Commands paused — waiting for "${pendingCommand.value.command}" to finish`, 'warning')
   }
 })
@@ -438,6 +474,29 @@ const kioskId = computed(() => route.params.id)
 const playlistActiveIdx = computed(() => livePlaylistState.value?.idx ?? null)
 const playlistPlaying = computed(() => livePlaylistState.value != null)
 
+// Best-guess live uptime: the value the node last reported plus the time elapsed
+// since. Only trustworthy while the node is online (regular heartbeats) — if it
+// stopped checking in we can't assume it stayed up (it may have rebooted), so we
+// show "Unknown". countdownTick drives the once-a-second re-evaluation.
+const uptimeDisplay = computed(() => {
+  void countdownTick.value
+  if (liveStatus.value !== 'online') return 'Unknown'
+  if (liveUptimeSeconds.value == null || !liveUptimeReportedAt.value) return 'Unknown'
+  const elapsed = (Date.now() - new Date(liveUptimeReportedAt.value).getTime()) / 1000
+  return fmtUptime(liveUptimeSeconds.value + Math.max(0, elapsed))
+})
+
+function fmtUptime(seconds) {
+  const s = Math.floor(seconds)
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (d > 0) return `${d}d ${h}h ${m}m`
+  if (h > 0) return `${h}h ${m}m`
+  if (m > 0) return `${m}m`
+  return `${s}s`
+}
+
 const playlistCountdown = computed(() => {
   // countdownTick drives re-evaluation every second
   void countdownTick.value
@@ -458,6 +517,8 @@ async function refreshLive() {
     liveUrl.value = k.current_url
     liveInput.value = k.current_input || null
     liveDisplayOn.value = k.display_on ?? null
+    liveUptimeSeconds.value = k.uptime_seconds ?? null
+    liveUptimeReportedAt.value = k.uptime_reported_at ?? null
     liveTabs.value = k.browser_tabs || []
     tabsUpdatedAt.value = Date.now()
     livePlaylistState.value = k.playlist_state ?? null
@@ -479,6 +540,8 @@ async function load() {
     liveUrl.value = k.current_url
     liveInput.value = k.current_input || null
     liveDisplayOn.value = k.display_on ?? null
+    liveUptimeSeconds.value = k.uptime_seconds ?? null
+    liveUptimeReportedAt.value = k.uptime_reported_at ?? null
     liveTabs.value = k.browser_tabs || []
     tabsUpdatedAt.value = Date.now()
     livePlaylistState.value = k.playlist_state ?? null
@@ -594,9 +657,17 @@ async function loadCommandLog() {
 }
 
 async function connectSSE() {
-  const token = await getAccessToken()
+  // EventSource can't send an Authorization header, so we exchange our bearer
+  // token for a short-lived single-use ticket (kept out of access logs) and
+  // pass that in the query string instead.
   const base = `${API_URL}/kiosks/${kioskId.value}/sse`
-  const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
+  let url = base
+  try {
+    const { ticket } = await apiFetch(`/kiosks/${kioskId.value}/sse-ticket`, { method: 'POST' })
+    if (ticket) url = `${base}?ticket=${encodeURIComponent(ticket)}`
+  } catch {
+    return  // not authorized / fetch failed — skip the stream rather than leak a token
+  }
   sse = new EventSource(url)
   sse.addEventListener('status', e => {
     try {
@@ -697,12 +768,16 @@ async function sendNav() {
 
 async function openNewTab() {
   if (blockedByPending()) return
+  const url = newTabUrl.value
   commanding.value = true
   try {
     await apiFetch(`/kiosks/${kioskId.value}/browsers`, {
       method: 'POST',
-      body: JSON.stringify({ url: newTabUrl.value }),
+      body: JSON.stringify({ url }),
     })
+    // Show the tab right away; the fast poll fills in title/active/age once the
+    // agent reports it back, then the placeholder is replaced by the real row.
+    addPendingTab(url)
     toast.add('Tab opened', 'success')
     newTabUrl.value = ''
   } catch {
@@ -729,6 +804,9 @@ async function activateTab(tabId) {
   commanding.value = true
   try {
     await apiFetch(`/kiosks/${kioskId.value}/browsers/${tabId}/activate`, { method: 'POST' })
+    // Show this tab as on-screen right away; the fast poll confirms once the agent
+    // reports it active, then the optimistic override is dropped.
+    markPendingFocus(tabId)
     livePlaylistState.value = null  // focusing a tab stops the playlist on the node
     toast.add('Tab focused — playlist stopped', 'success')
   } catch {
@@ -743,6 +821,9 @@ async function refreshTab(tabId) {
   commanding.value = true
   try {
     await apiFetch(`/kiosks/${kioskId.value}/browsers/${tabId}/refresh`, { method: 'POST' })
+    // Show the tab as "refreshing…" right away; the fast poll clears it once the
+    // agent reports the tab reloaded (its age resets).
+    markPendingRefresh(tabId)
     toast.add('Tab refresh sent', 'success')
   } catch {
     toast.add('Failed to refresh tab', 'error')
@@ -753,8 +834,129 @@ async function refreshTab(tabId) {
 
 function savedUrlFor(tabUrl) {
   if (!tabUrl) return null
-  const norm = tabUrl.replace(/\/$/, '')
-  return savedUrls.value.find(u => u.url.replace(/\/$/, '') === norm) ?? null
+  const norm = normUrl(tabUrl)
+  return savedUrls.value.find(u => normUrl(u.url) === norm) ?? null
+}
+
+function normUrl(u) {
+  return (u || '').replace(/\/$/, '')
+}
+
+// Color the HTTP status the page received: 2xx green, 4xx/5xx red, anything else
+// (3xx, etc.) neutral. Returned as an inline style for the badge pill.
+function statusBadgeStyle(code) {
+  const base = 'font-weight: 600; font-size: 0.65rem; line-height: 1; padding: 0.15rem 0.35rem; border: 1px solid; border-radius: var(--radius-sm); flex-shrink: 0;'
+  if (code >= 200 && code < 300) return base + ' color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, transparent)'
+  if (code >= 400 && code < 600) return base + ' color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent)'
+  return base + ' color: var(--text-muted); border-color: var(--border)'
+}
+
+// Real tabs from the agent, plus any optimistic pending tabs whose URL the agent
+// hasn't reported yet. Once a pending tab's URL shows up in liveTabs the watcher
+// below drops the placeholder, so the real (detailed) row takes its place.
+const displayTabs = computed(() => {
+  const liveUrls = new Set(liveTabs.value.map(t => normUrl(t.url)))
+  const unresolved = pendingTabs.value.filter(t => !liveUrls.has(normUrl(t.url)))
+  return [...liveTabs.value, ...unresolved]
+})
+
+// Effective on-screen state: while a Focus is pending, optimistically treat the
+// clicked tab as the active one (only one tab can be active) until the agent
+// confirms; otherwise trust the reported flag.
+function isTabActive(tab) {
+  if (pendingFocusTabId.value != null) return tab.id === pendingFocusTabId.value
+  return !!tab.active
+}
+
+function hasPendingTabWork() {
+  return pendingTabs.value.length > 0
+    || pendingFocusTabId.value != null
+    || Object.keys(pendingRefreshTabs.value).length > 0
+}
+
+// A refresh is confirmed once the agent reports this tab's last reload as newer
+// than the click. age_seconds is a node-measured duration (skew-free); subtracting
+// it from the snapshot's wall-clock gives the absolute reload time to compare.
+function refreshConfirmed(tab, clickTime) {
+  if (tab.age_seconds != null) {
+    return tabsUpdatedAt.value - tab.age_seconds * 1000 >= clickTime - 1500
+  }
+  // No age info — accept the first fresh snapshot taken after the click.
+  return tabsUpdatedAt.value > clickTime
+}
+
+// Whenever fresh tab data arrives (SSE or poll), retire anything the agent has now
+// confirmed — placeholders whose URL showed up, a focus whose tab is now active, and
+// refreshes whose tab reloaded — then stop the fast poll once nothing is pending.
+watch(liveTabs, (tabs) => {
+  if (pendingTabs.value.length) {
+    const liveUrls = new Set(tabs.map(t => normUrl(t.url)))
+    pendingTabs.value = pendingTabs.value.filter(t => !liveUrls.has(normUrl(t.url)))
+  }
+  if (pendingFocusTabId.value != null) {
+    const t = tabs.find(t => t.id === pendingFocusTabId.value)
+    if (t && t.active) pendingFocusTabId.value = null
+  }
+  const refreshIds = Object.keys(pendingRefreshTabs.value)
+  if (refreshIds.length) {
+    const next = { ...pendingRefreshTabs.value }
+    let changed = false
+    for (const tab of tabs) {
+      const ct = next[tab.id]
+      if (ct != null && refreshConfirmed(tab, ct)) { delete next[tab.id]; changed = true }
+    }
+    if (changed) pendingRefreshTabs.value = next
+  }
+  if (!hasPendingTabWork()) stopTabPolling()
+})
+
+function addPendingTab(url) {
+  pendingTabs.value.push({ id: `pending-${++pendingTabSeq}`, url, pending: true, createdAt: Date.now() })
+  startTabPolling()
+}
+
+function markPendingFocus(tabId) {
+  pendingFocusTabId.value = tabId
+  pendingFocusAt = Date.now()
+  startTabPolling()
+}
+
+function markPendingRefresh(tabId) {
+  pendingRefreshTabs.value = { ...pendingRefreshTabs.value, [tabId]: Date.now() }
+  startTabPolling()
+}
+
+// While tab work is pending, poll the API faster than the 15s background cadence so
+// placeholders fill in (or time out) quickly. refreshLive() updates liveTabs, which
+// the watcher above reconciles against pendingTabs / pendingFocusTabId.
+function startTabPolling() {
+  if (tabPollInterval) return
+  tabPollInterval = setInterval(async () => {
+    await refreshLive()
+    const now = Date.now()
+    const cutoff = now - PENDING_TAB_TIMEOUT_MS
+    const timedOut = pendingTabs.value.filter(t => t.createdAt < cutoff)
+    if (timedOut.length) {
+      pendingTabs.value = pendingTabs.value.filter(t => t.createdAt >= cutoff)
+      toast.add('Tab is taking longer than expected — the node may be offline', 'warning')
+    }
+    if (pendingFocusTabId.value != null && now - pendingFocusAt > PENDING_TAB_TIMEOUT_MS) {
+      pendingFocusTabId.value = null
+      toast.add('Focus is taking longer than expected — the node may be offline', 'warning')
+    }
+    const staleRefresh = Object.entries(pendingRefreshTabs.value).filter(([, ct]) => now - ct > PENDING_TAB_TIMEOUT_MS)
+    if (staleRefresh.length) {
+      const next = { ...pendingRefreshTabs.value }
+      for (const [id] of staleRefresh) delete next[id]
+      pendingRefreshTabs.value = next
+      toast.add('Refresh is taking longer than expected — the node may be offline', 'warning')
+    }
+    if (!hasPendingTabWork()) stopTabPolling()
+  }, 2000)
+}
+
+function stopTabPolling() {
+  if (tabPollInterval) { clearInterval(tabPollInterval); tabPollInterval = null }
 }
 
 function truncateUrl(url) {
@@ -815,6 +1017,7 @@ onUnmounted(() => {
   clearInterval(logPollInterval)
   clearInterval(countdownInterval)
   clearInterval(pollInterval)
+  stopTabPolling()
 })
 </script>
 

@@ -12,6 +12,8 @@
       </button>
     </div>
 
+    <div class="edit-grid">
+
     <!-- Basic info -->
     <div class="card">
       <div class="card-header">Details</div>
@@ -274,6 +276,20 @@
       </table>
     </div>
 
+    <!-- Danger zone -->
+    <div class="card mt-lg" style="border-color: color-mix(in srgb, var(--danger) 30%, var(--border))">
+      <div class="card-header" style="color: var(--danger)">Danger Zone</div>
+      <div style="display: flex; align-items: center; justify-content: space-between">
+        <div>
+          <div class="text-sm" style="font-weight: 500">Delete this kiosk</div>
+          <div class="text-xs text-muted mt-sm">Removes the kiosk and all associated tokens. This cannot be undone.</div>
+        </div>
+        <button class="btn btn-danger" @click="deleteKiosk">Delete Kiosk</button>
+      </div>
+    </div>
+
+    </div><!-- /edit-grid -->
+
     <!-- Create Token Modal -->
     <div v-if="showCreateTokenModal" class="dialog-backdrop" @click.self="showCreateTokenModal = false">
       <div class="dialog">
@@ -307,18 +323,6 @@
         </div>
       </div>
     </div>
-
-    <!-- Danger zone -->
-    <div class="card mt-lg" style="border-color: color-mix(in srgb, var(--danger) 30%, var(--border))">
-      <div class="card-header" style="color: var(--danger)">Danger Zone</div>
-      <div style="display: flex; align-items: center; justify-content: space-between">
-        <div>
-          <div class="text-sm" style="font-weight: 500">Delete this kiosk</div>
-          <div class="text-xs text-muted mt-sm">Removes the kiosk and all associated tokens. This cannot be undone.</div>
-        </div>
-        <button class="btn btn-danger" @click="deleteKiosk">Delete Kiosk</button>
-      </div>
-    </div>
   </div>
 
   <div v-else-if="loading" class="text-muted text-sm">Loading…</div>
@@ -341,7 +345,7 @@ const kioskId = computed(() => route.params.id)
 const { pendingCommand, blocked, refresh: refreshPending } = usePendingCommand(kioskId)
 
 watch(() => pendingCommand.value?.id, (id) => {
-  if (id) {
+  if (id && blocked.value) {
     toast.add(`Commands paused — waiting for "${pendingCommand.value.command}" to finish`, 'warning')
   }
 })

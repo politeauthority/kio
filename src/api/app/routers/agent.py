@@ -35,6 +35,7 @@ class HeartbeatPayload(BaseModel):
     features: list[str] | None = None
     device_type: str | None = None
     ip_address: str | None = None
+    uptime_seconds: int | None = None
 
 
 @router.post("/heartbeat", status_code=204)
@@ -97,6 +98,11 @@ async def heartbeat(
         kiosk.device_type = payload.device_type
     if payload.ip_address is not None:
         kiosk.ip_address = payload.ip_address
+    if payload.uptime_seconds is not None:
+        # Stamp the arrival time so the dashboard can extrapolate live uptime; a
+        # reboot re-reports a fresh value (metadata heartbeat fires on boot).
+        kiosk.uptime_seconds = payload.uptime_seconds
+        kiosk.uptime_reported_at = datetime.now(timezone.utc)
     if payload.current_input is not None:
         kiosk.current_input = payload.current_input
     if payload.display_on is not None:
@@ -170,6 +176,12 @@ async def get_agent_settings(
     display_resolution = kiosk.meta.get("display_resolution")
     if display_resolution:
         result["display_resolution"] = display_resolution
+    # Global default page — the URL a node shows when it has nothing else to do
+    # (boot with no playlist, last tab closed). Omitted when unset so the agent
+    # falls back to its own start_url.
+    default_url_row = await session.get(AppSetting, "global_default_url")
+    if default_url_row and default_url_row.value:
+        result["default_url"] = default_url_row.value
     return result
 
 

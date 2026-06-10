@@ -227,11 +227,6 @@ loadKeys()
 
 const flagDefs = [
   {
-    key: 'browser_management',
-    label: 'Browser Management',
-    description: 'Show the Browsers section on kiosk detail pages.',
-  },
-  {
     key: 'playlists',
     label: 'Playlists',
     description: 'Show the Playlists section on kiosk detail pages and the Playlists nav item.',

@@ -93,6 +93,11 @@ const nodeItems = computed(() => {
       title: 'Browser Flags',
       description: 'Default Chromium flags applied to all nodes.',
     },
+    {
+      to: '/settings/default-page',
+      title: 'Default Page',
+      description: 'Page every node shows when idle — at boot or when the last tab closes.',
+    },
   ]
   if (flagStore.isEnabled('import_certs')) {
     items.push({

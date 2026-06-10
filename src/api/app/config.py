@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:4173"]
     node_offline_threshold_seconds: int = 90
     log_level: str = "INFO"
+    # Expose the interactive API docs (/docs, /redoc, /openapi.json).
+    # Off by default (locked down); enable per-env (e.g. dev) via DOCS_ENABLED=true.
+    docs_enabled: bool = False
 
     # Auth
     # Set to true to disable all dashboard auth (local dev only).

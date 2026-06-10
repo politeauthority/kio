@@ -2,9 +2,12 @@
   <!-- Public routes (login, callback) render bare — no shell, no API calls -->
   <RouterView v-if="route.meta.public" />
 
-  <div v-else :class="['app-shell', { 'has-env-banner': kioBranch, 'sidebar-collapsed': collapsed }]">
+  <div v-else :class="['app-shell', { 'has-env-banner': kioBranch || isLocal, 'sidebar-collapsed': collapsed }]">
     <div v-if="kioBranch" class="env-banner">
       STAGING &mdash; <code class="env-banner-branch">{{ kioBranch }}</code>
+    </div>
+    <div v-else-if="isLocal" class="env-banner env-banner-local">
+      LOCAL
     </div>
     <aside class="sidebar">
       <div class="sidebar-header">
@@ -99,9 +102,10 @@ import { useToastStore } from './stores/toast'
 import { useFeatureFlagsStore } from './stores/featureFlags'
 import { useApi } from './composables/useApi'
 import { logout, isAuthenticated, AUTH_ENABLED } from './auth'
-import { KIO_BRANCH } from './config'
+import { KIO_BRANCH, IS_LOCAL } from './config'
 
 const kioBranch = KIO_BRANCH
+const isLocal = IS_LOCAL
 const toastStore = useToastStore()
 const featureFlags = useFeatureFlagsStore()
 const route = useRoute()
