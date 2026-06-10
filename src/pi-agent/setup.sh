@@ -673,7 +673,11 @@ fi
 sudo chown "$TARGET_USER:$TARGET_USER" /etc/kio/kiosk.yaml
 sudo chmod 600 /etc/kio/kiosk.yaml
 
-touch /etc/kio/browser-flags
+# Create via sudo and hand ownership to the kiosk user, so this works whether the
+# file is missing, already owned by the user, or left root-owned by an earlier run
+# (e.g. a botched `sudo bash setup.sh`). The agent (running as the user) writes here.
+sudo touch /etc/kio/browser-flags
+sudo chown "$TARGET_USER:$TARGET_USER" /etc/kio/browser-flags
 
 # Ensure HDMI is always active even when the display is off at boot.
 # hdmi_force_hotplug makes the firmware always assert HPD so the Pi outputs a signal.
