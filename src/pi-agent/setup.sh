@@ -125,6 +125,13 @@ if [[ "$(id -u)" -eq 0 ]]; then
     echo "  NOTE: setup.sh is running as root via sudo. It's meant to run as the"
     echo "        kiosk user (sudo only where needed) — installing for '$SUDO_USER'."
     echo ""
+  elif [[ -d "$INSTALL_DIR" && "$(stat -c '%U' "$INSTALL_DIR")" != "root" ]]; then
+    # Bare root but the agent is already installed — e.g. the agent self-update runs
+    # setup.sh in a root systemd unit with no SUDO_USER. Adopt the existing install's
+    # owner as the kiosk user instead of refusing, so unattended updates work.
+    SUDO_USER="$(stat -c '%U' "$INSTALL_DIR")"
+    echo "  NOTE: running as root with no SUDO_USER; adopting existing install owner '$SUDO_USER'."
+    echo ""
   else
     echo "  ERROR: don't run setup.sh as root directly."
     echo "         Run it as the kiosk user; it will sudo for the privileged steps:"
