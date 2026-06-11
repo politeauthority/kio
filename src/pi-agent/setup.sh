@@ -741,7 +741,12 @@ sudo mkdir -p "$INSTALL_DIR"
 fix_owner "$INSTALL_DIR"
 run_as_user cp "$SCRIPT_DIR/agent.py" "$SCRIPT_DIR/requirements.txt" "$SCRIPT_DIR/scripts/update-hosts" "$SCRIPT_DIR/scripts/update-certs" "$SCRIPT_DIR/scripts/browser-start" "$SCRIPT_DIR/scripts/force-hdmi" "$SCRIPT_DIR/scripts/set-resolution" "$SCRIPT_DIR/scripts/self-update" "$INSTALL_DIR/"
 run_as_user chmod +x "$INSTALL_DIR/update-hosts" "$INSTALL_DIR/update-certs" "$INSTALL_DIR/browser-start" "$INSTALL_DIR/force-hdmi" "$INSTALL_DIR/set-resolution" "$INSTALL_DIR/self-update"
-[[ -f "$SCRIPT_DIR/VERSION" ]] && run_as_user cp "$SCRIPT_DIR/VERSION" "$INSTALL_DIR/"
+# VERSION lives next to setup.sh on a manual deploy, but at the repo root on the
+# git-bootstrap (self-update) path — copy from wherever it is, else the node keeps
+# reporting its old version after an update.
+for _vsrc in "$SCRIPT_DIR/VERSION" "$SCRIPT_DIR/../../VERSION"; do
+  [[ -f "$_vsrc" ]] && { run_as_user cp "$_vsrc" "$INSTALL_DIR/VERSION"; break; }
+done
 run_as_user rm -rf "$INSTALL_DIR/venv"
 run_as_user "$UV_BIN" venv --seed "$INSTALL_DIR/venv"
 run_as_user "$UV_BIN" pip install --quiet --python "$INSTALL_DIR/venv/bin/python" -r "$INSTALL_DIR/requirements.txt"
