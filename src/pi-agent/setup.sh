@@ -100,7 +100,11 @@ if [[ -z "${KIO_BOOTSTRAPPED:-}" && ( -z "$SCRIPT_DIR" || ! -f "$SCRIPT_DIR/agen
   # public repo source at this point, so world-read is fine.
   chmod -R a+rX "$_boot"
   export KIO_BOOTSTRAPPED=1
-  if [[ -e /dev/tty ]]; then
+  # Reconnect stdin to the terminal so prompts work after re-exec — but only if
+  # /dev/tty is actually openable. It can EXIST as a device node yet fail to open
+  # (ENXIO) when there's no controlling terminal, e.g. the agent self-update runs
+  # this in a detached systemd-run unit; test openability, not mere presence.
+  if (: </dev/tty) 2>/dev/null; then
     exec bash "$_boot/kio/src/pi-agent/setup.sh" "$@" </dev/tty
   else
     exec bash "$_boot/kio/src/pi-agent/setup.sh" "$@"
