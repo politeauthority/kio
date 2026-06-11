@@ -163,6 +163,10 @@ ALLOWED_COMMANDS = {
 
 ALLOWED_INPUTS = {"dp1", "dp2", "hdmi1", "hdmi2"}
 
+# Event-log labels that differ from the wire command sent to the agent. The agent
+# still receives the bare command (e.g. "reboot"); the log records the request.
+COMMAND_EVENT_LABELS = {"reboot": "reboot_requested"}
+
 
 class CommandPayload(BaseModel):
     command: str
@@ -179,7 +183,8 @@ async def send_command(
     kiosk = await kiosk_service.get_by_id(session, kiosk_id)
     if kiosk is None:
         raise HTTPException(status_code=404, detail="Kiosk not found")
-    dispatch_command(session, kiosk_id, command=payload.command, payload={"command": payload.command})
+    event_label = COMMAND_EVENT_LABELS.get(payload.command, payload.command)
+    dispatch_command(session, kiosk_id, command=event_label, payload={"command": payload.command})
     await session.commit()
 
 

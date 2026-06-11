@@ -64,7 +64,7 @@ async def heartbeat(
             CommandLog(
                 id=uuid.uuid4(),
                 kiosk_id=kiosk.id,
-                command="node rebooted",
+                command="rebooted",
                 source="system",
                 agent_success=True,
                 agent_at=datetime.now(timezone.utc),

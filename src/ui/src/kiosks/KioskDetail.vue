@@ -389,15 +389,16 @@
               <td class="text-sm"><code>{{ entry.command }}</code></td>
               <td class="text-xs text-muted">{{ entry.source }}</td>
               <td>
-                <span v-if="entry.agent_success === null" class="text-muted text-xs">pending</span>
-                <span v-else-if="entry.agent_success" style="color: var(--success); font-size: 0.85rem; font-weight: 600">✓</span>
-                <span v-else class="result-fail">
-                  ✗<span v-if="entry.agent_message" class="expand-caret">{{ expandedRows.has(entry.id) ? '▾' : '▸' }}</span>
+                <span class="result-cell">
+                  <span v-if="entry.agent_success === null" class="text-muted text-xs">pending</span>
+                  <span v-else-if="entry.agent_success" class="result-ok">✓</span>
+                  <span v-else class="result-fail">✗</span>
+                  <span v-if="entry.agent_message" class="expand-caret">{{ expandedRows.has(entry.id) ? '▲' : '▼' }}</span>
                 </span>
               </td>
             </tr>
-            <tr v-if="entry.agent_message && expandedRows.has(entry.id)" class="error-detail-row">
-              <td colspan="4"><pre class="error-detail">{{ entry.agent_message }}</pre></td>
+            <tr v-if="entry.agent_message && expandedRows.has(entry.id)" class="msg-detail-row">
+              <td colspan="4"><pre class="msg-detail" :class="{ 'is-error': entry.agent_success === false }">{{ entry.agent_message }}</pre></td>
             </tr>
           </template>
         </tbody>
@@ -1424,31 +1425,43 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.03);
 }
 
-.result-fail {
-  color: var(--danger);
-  font-size: 0.8rem;
+.result-cell {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
 }
+.result-ok {
+  color: var(--success);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.result-fail {
+  color: var(--danger);
+  font-size: 0.8rem;
+}
 .expand-caret {
   font-size: 0.7rem;
-  opacity: 0.7;
+  color: var(--text-muted);
 }
 
-.error-detail-row td {
+.msg-detail-row td {
   padding: 0;
 }
-.error-detail {
+.msg-detail {
   margin: 0;
   padding: 0.6rem 0.85rem;
-  background: rgba(239, 68, 68, 0.08);
-  border-left: 2px solid var(--danger);
-  color: var(--danger);
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid var(--border);
+  color: var(--text-muted);
   font-size: 0.75rem;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.msg-detail.is-error {
+  background: rgba(239, 68, 68, 0.08);
+  border-left-color: var(--danger);
+  color: var(--danger);
 }
 </style>
