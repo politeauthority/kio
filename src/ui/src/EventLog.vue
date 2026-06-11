@@ -51,22 +51,32 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="entry in rows" :key="entry.id">
-              <td class="text-xs text-muted" style="white-space: nowrap">{{ formatDate(entry.sent_at) }}</td>
-              <td class="text-sm">
-                <RouterLink :to="`/kiosks/${entry.kiosk_id}/log`">{{ entry.kiosk_name }}</RouterLink>
-              </td>
-              <td class="text-sm"><code>{{ entry.command }}</code></td>
-              <td class="text-xs text-muted" style="word-break: break-all">{{ entry.subject ?? '—' }}</td>
-              <td class="text-xs text-muted">{{ entry.source }}</td>
-              <td>
-                <span v-if="entry.status === 'ok'" style="color: var(--success); font-size: 0.85rem; font-weight: 600">✓</span>
-                <span v-else-if="entry.status === 'failed'" style="color: var(--danger); font-size: 0.8rem">✗</span>
-                <span v-else-if="entry.status === 'no_response'" style="color: var(--warning); font-size: 0.75rem">no response</span>
-                <span v-else class="text-muted text-xs">pending</span>
-              </td>
-              <td class="text-xs text-muted">{{ entry.agent_message ?? '—' }}</td>
-            </tr>
+            <template v-for="entry in rows" :key="entry.id">
+              <tr
+                :class="{ 'row-expandable': !!entry.agent_message }"
+                @click="entry.agent_message && toggleRow(entry.id)"
+              >
+                <td class="text-xs text-muted" style="white-space: nowrap">{{ formatDate(entry.sent_at) }}</td>
+                <td class="text-sm">
+                  <RouterLink :to="`/kiosks/${entry.kiosk_id}/log`" @click.stop>{{ entry.kiosk_name }}</RouterLink>
+                </td>
+                <td class="text-sm"><code>{{ entry.command }}</code></td>
+                <td class="text-xs text-muted" style="word-break: break-all">{{ entry.subject ?? '—' }}</td>
+                <td class="text-xs text-muted">{{ entry.source }}</td>
+                <td>
+                  <span v-if="entry.status === 'ok'" style="color: var(--success); font-size: 0.85rem; font-weight: 600">✓</span>
+                  <span v-else-if="entry.status === 'failed'" class="result-fail">
+                    ✗<span v-if="entry.agent_message" class="expand-caret">{{ expandedRows.has(entry.id) ? '▾' : '▸' }}</span>
+                  </span>
+                  <span v-else-if="entry.status === 'no_response'" style="color: var(--warning); font-size: 0.75rem">no response</span>
+                  <span v-else class="text-muted text-xs">pending</span>
+                </td>
+                <td class="text-xs text-muted event-msg-cell">{{ entry.agent_message ?? '—' }}</td>
+              </tr>
+              <tr v-if="entry.agent_message && expandedRows.has(entry.id)" class="error-detail-row">
+                <td colspan="7"><pre class="error-detail">{{ entry.agent_message }}</pre></td>
+              </tr>
+            </template>
           </tbody>
         </table>
 
@@ -104,6 +114,14 @@ const commands = ref([])
 const kioskId = ref('')
 const command = ref('')
 const status = ref('')
+
+// Event rows whose error detail is currently expanded.
+const expandedRows = ref(new Set())
+function toggleRow(id) {
+  const next = new Set(expandedRows.value)
+  next.has(id) ? next.delete(id) : next.add(id)
+  expandedRows.value = next
+}
 const searchInput = ref('')
 const search = ref('')
 
@@ -164,3 +182,47 @@ onMounted(async () => {
   fetchLog()
 })
 </script>
+
+<style scoped>
+.row-expandable {
+  cursor: pointer;
+}
+.row-expandable:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.result-fail {
+  color: var(--danger);
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.expand-caret {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.event-msg-cell {
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.error-detail-row td {
+  padding: 0;
+}
+.error-detail {
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+  background: rgba(239, 68, 68, 0.08);
+  border-left: 2px solid var(--danger);
+  color: var(--danger);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+</style>
