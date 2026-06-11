@@ -440,7 +440,10 @@ async def update_agent(
     if kiosk is None:
         raise HTTPException(status_code=404, detail="Kiosk not found")
     ref = agent_update_ref()
-    dispatch_command(session, kiosk_id, command="update_agent", subject=ref,
+    # Logged as "update_agent_attempt"; the node reports update_agent_success /
+    # update_agent_failure once it restarts. The MQTT payload command stays
+    # "update_agent" (the agent's command-handler key).
+    dispatch_command(session, kiosk_id, command="update_agent_attempt", subject=ref,
                      payload={"command": "update_agent", "ref": ref})
     await session.commit()
 

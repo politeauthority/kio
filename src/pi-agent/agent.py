@@ -71,6 +71,12 @@ def _read_version() -> str:
 
 AGENT_VERSION = _read_version()
 
+# An update restarts the agent, so the agent that issues it can only log the
+# attempt. A marker written before launch lets the *new* agent (post-restart)
+# log the success/failure outcome on boot. See _report_update_result().
+UPDATE_STATE_FILE = "/opt/kio-agent/update-state.json"
+UPDATE_LOG_FILE = "/var/log/kio-agent-update.log"
+
 def _read_boot_id() -> str:
     try:
         return open("/proc/sys/kernel/random/boot_id").read().strip()
@@ -1488,6 +1494,59 @@ def _report_command(command: str, success: bool, message: str | None = None,
         logger.warning("Failed to report command result for %s: %s", command, exc)
 
 
+def _report_update_result() -> None:
+    """After a restart, log the outcome of a self-update — if one was attempted.
+
+    The update_agent handler leaves a marker before restarting; on boot we read it
+    and emit update_agent_success or update_agent_failure to the event log. Success
+    is inferred from the version actually advancing (with the update log as backup
+    detail), then the marker is cleared so it's reported only once.
+    """
+    if not _agent:
+        return
+    try:
+        if not os.path.exists(UPDATE_STATE_FILE):
+            return
+        try:
+            with open(UPDATE_STATE_FILE) as f:
+                marker = json.load(f)
+        except Exception:
+            marker = {}
+
+        ref = marker.get("ref") or "?"
+        from_version = marker.get("from_version")
+        to_version = AGENT_VERSION
+        changed = bool(from_version) and from_version != to_version
+
+        # Tail of the updater's log for context (best effort).
+        tail = ""
+        if os.path.exists(UPDATE_LOG_FILE):
+            try:
+                with open(UPDATE_LOG_FILE, errors="replace") as f:
+                    tail = f.read()[-400:].strip().replace("\n", " | ")
+            except Exception:
+                tail = ""
+
+        if changed or "RESULT: ok" in tail:
+            _report_command(
+                "update_agent_success", True,
+                f"Updated {from_version or '?'} -> {to_version} (ref {ref})",
+            )
+        else:
+            msg = f"Update to ref {ref} did not change version (still {to_version})"
+            if tail:
+                msg = f"{msg}: {tail[-200:]}"
+            _report_command("update_agent_failure", False, msg)
+
+        # Reported — clear the marker so we don't re-report on the next boot.
+        try:
+            os.remove(UPDATE_STATE_FILE)
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.warning("Failed to report update result: %s", exc)
+
+
 def handle_command(payload: bytes) -> None:
     try:
         cmd = json.loads(payload)
@@ -1687,13 +1746,24 @@ def handle_command(payload: bytes) -> None:
                     f.write(ref)
             except Exception as exc:
                 logger.warning("update_agent: could not write update-ref (%s); defaulting to main", exc)
+            # Drop a marker so the new agent (after the restart this triggers) can log
+            # update_agent_success / update_agent_failure once it comes back.
+            try:
+                with open(UPDATE_STATE_FILE, "w") as f:
+                    json.dump({
+                        "ref": ref,
+                        "from_version": AGENT_VERSION,
+                        "issued_at": datetime.now(timezone.utc).isoformat(),
+                    }, f)
+            except Exception as exc:
+                logger.warning("update_agent: could not write update-state marker: %s", exc)
             # Launch detached — self-update re-execs into its own systemd unit so the
             # kio-agent restart at the end of the update can't kill it mid-flight.
             subprocess.Popen(
                 ["sudo", "/opt/kio-agent/self-update"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            _report_command("update_agent", True, f"Update started (ref {ref})", command_id=command_id)
+            _report_command("update_agent_attempt", True, f"Update started (ref {ref})", command_id=command_id)
             return
         elif command == "display_off":
             _set_display_power(False)
@@ -2442,6 +2512,10 @@ class KioAgent:
         # Pull node settings on every restart, applying heartbeat/jitter/metadata
         # cadence and reporting success/failure to the event log.
         self._apply_settings(report=True)
+        # If a self-update just ran, log update_agent_success / update_agent_failure.
+        # Done after the settings sync so the detached updater has had a moment to
+        # finish writing its log before we read it.
+        _report_update_result()
         # Resume any active playlist before the first heartbeat so the DB's
         # playlist_state (written by the previous run) is still readable here.
         self._resume_state()
