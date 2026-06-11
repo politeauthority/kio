@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Pull the latest kio agent from git and reinstall. Invoked by the agent (via
+# sudo, listed in /etc/sudoers.d/kio-agent) when the dashboard sends an
+# "update_agent" command.
+#
+# The git ref to update to is dictated by the API (so a node lands on a build
+# compatible with the running server, not whatever happens to be on main). The
+# agent writes that ref to /opt/kio-agent/update-ref before invoking this; we read
+# it here. The sudoers entry is an exact, no-argument match, which is why the ref
+# travels via a file rather than a command-line argument.
+#
+# The update ends by restarting kio-agent.service. If this ran inside the agent's
+# own service cgroup that restart would kill it mid-flight, so the first pass
+# re-launches itself as a transient systemd unit (its own cgroup) which survives
+# the restart. The second pass does the actual git pull + reinstall via setup.sh,
+# which self-bootstraps (clones the ref, reinstalls the agent + venv, restarts the
+# service). Running as root makes setup.sh's internal sudo calls no-ops.
+set -euo pipefail
+
+REF_FILE=/opt/kio-agent/update-ref
+
+BRANCH="${KIO_BRANCH:-}"
+if [[ -z "$BRANCH" && -r "$REF_FILE" ]]; then
+  BRANCH="$(tr -d '[:space:]' < "$REF_FILE")"
+fi
+BRANCH="${BRANCH:-main}"
+# Only accept a plain git ref (branch or tag); anything else falls back to main.
+[[ "$BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || BRANCH="main"
+
+if [[ -z "${KIO_UPDATE_DETACHED:-}" ]]; then
+  exec systemd-run --unit=kio-agent-self-update --collect \
+    --setenv=KIO_UPDATE_DETACHED=1 --setenv=KIO_BRANCH="$BRANCH" \
+    /opt/kio-agent/self-update
+fi
+
+exec >>/var/log/kio-agent-update.log 2>&1
+echo "=== $(date -Is) kio-agent self-update (ref=$BRANCH) ==="
+curl -fsSL "https://raw.githubusercontent.com/politeauthority/kio/${BRANCH}/src/pi-agent/setup.sh" \
+  | KIO_BRANCH="$BRANCH" bash
+echo "=== $(date -Is) kio-agent self-update finished ==="
