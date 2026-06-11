@@ -151,6 +151,47 @@
       </template>
     </div>
 
+    <!-- Update History -->
+    <div class="card mt-lg">
+      <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0">
+        <span>Update History</span>
+        <span class="text-xs text-muted">agent self-updates</span>
+      </div>
+      <div v-if="!updateLog.length" class="text-sm text-muted" style="margin-top: 1rem">
+        No agent updates recorded yet.
+      </div>
+      <div v-else style="display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem">
+        <div
+          v-for="u in updateLog"
+          :key="u.id"
+          style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 0.8rem; background: var(--bg-dark)"
+        >
+          <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap">
+            <span
+              class="text-xs"
+              style="padding: 0.1rem 0.45rem; border-radius: var(--radius-sm); font-weight: 600"
+              :style="u.status === 'success'
+                ? 'color: var(--success); background: color-mix(in srgb, var(--success) 16%, transparent)'
+                : (u.status === 'failed'
+                  ? 'color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent)'
+                  : 'color: var(--text-muted); background: var(--bg-surface)')"
+            >{{ u.status }}</span>
+            <span class="text-sm" style="font-weight: 500">
+              {{ u.from_version || '?' }} → {{ u.to_version || '?' }}
+            </span>
+            <code v-if="u.ref" class="text-xs text-muted">{{ u.ref }}</code>
+            <span class="text-xs text-muted" style="margin-left: auto">
+              issued {{ u.issued_at ? fmt(u.issued_at) : '—' }} · reported {{ fmt(u.reported_at) }}
+            </span>
+          </div>
+          <details v-if="u.log" style="margin-top: 0.5rem">
+            <summary class="text-xs text-muted" style="cursor: pointer; user-select: none">behaviors log</summary>
+            <pre style="margin-top: 0.5rem; padding: 0.6rem; background: var(--bg-surface); border-radius: var(--radius-sm); font-size: 0.72rem; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto">{{ u.log }}</pre>
+          </details>
+        </div>
+      </div>
+    </div>
+
     <!-- Hardware Report -->
     <div v-if="kiosk.meta?.hardware_info" class="card mt-lg">
       <div class="card-header">Hardware Report</div>
@@ -297,6 +338,7 @@ watch(() => pendingCommand.value?.id, (id) => {
 })
 const kiosk = ref(null)
 const detectLog = ref(null)
+const updateLog = ref([])
 const loading = ref(true)
 const detecting = ref(false)
 const showRaw = ref(false)
@@ -345,9 +387,10 @@ const CORE_FLAGS = [
 
 async function load() {
   try {
-    ;[kiosk.value, detectLog.value] = await Promise.all([
+    ;[kiosk.value, detectLog.value, updateLog.value] = await Promise.all([
       apiFetch(`/kiosks/${kioskId.value}`),
       apiFetch(`/kiosks/${kioskId.value}/hardware-detect-log`).catch(() => null),
+      apiFetch(`/kiosks/${kioskId.value}/update-log`).catch(() => []),
     ])
     // Surface any comms state from a prior request (retrieval time unknown, so left blank).
     commsState.value = kiosk.value?.meta?.comms_state ?? null

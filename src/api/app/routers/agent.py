@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_session
 from app.deps import get_node_kiosk
+from app.models.agent_update_log import AgentUpdateLog
 from app.models.app_setting import AppSetting
 from app.models.command_log import CommandLog
 from app.models.hardware_detect_log import HardwareDetectLog
@@ -129,6 +130,7 @@ async def heartbeat(
             "browser_tabs": kiosk.browser_tabs,
             "playlist_state": kiosk.playlist_state,
             "tab_cycle_state": kiosk.tab_cycle_state,
+            "agent_version": kiosk.agent_version,
         },
     )
 
@@ -344,6 +346,61 @@ async def log_command(
                 agent_at=now,
             )
         )
+
+    await session.commit()
+
+
+class AgentUpdateLogPayload(BaseModel):
+    status: str
+    log: str = ""
+    ref: str | None = None
+    from_version: str | None = None
+    to_version: str | None = None
+    issued_at: datetime | None = None
+    command_id: uuid.UUID | None = None
+
+
+@router.post("/update-log", status_code=204)
+async def post_update_log(
+    payload: AgentUpdateLogPayload,
+    kiosk: Kiosk = Depends(get_node_kiosk),
+    session: AsyncSession = Depends(get_session),
+):
+    """Record what an agent self-update did, reported by the node after it restarts.
+
+    Also reconciles the dashboard's `update_agent` command-log row (which is left at
+    "Update started") with the real outcome, matched by command_id.
+    """
+    session.add(
+        AgentUpdateLog(
+            id=uuid.uuid4(),
+            kiosk_id=kiosk.id,
+            issued_at=payload.issued_at,
+            ref=payload.ref,
+            from_version=payload.from_version,
+            to_version=payload.to_version,
+            status=payload.status,
+            command_id=payload.command_id,
+            log=payload.log or "",
+        )
+    )
+
+    # Flip the originating "Update started" event-log row to the true outcome.
+    if payload.command_id is not None:
+        record = (await session.execute(
+            select(CommandLog).where(
+                CommandLog.id == payload.command_id,
+                CommandLog.kiosk_id == kiosk.id,
+            )
+        )).scalar_one_or_none()
+        if record is not None:
+            ok = payload.status == "success"
+            record.agent_success = ok
+            ver = payload.to_version or "?"
+            record.agent_message = (
+                f"Updated to {ver}" if ok else f"Update {payload.status} (ref {payload.ref or '?'})"
+            )
+            record.agent_at = datetime.now(timezone.utc)
 
     await session.commit()
 

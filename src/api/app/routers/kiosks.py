@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_session
+from app.models.agent_update_log import AgentUpdateLog
 from app.models.command_log import CommandLog
 from app.models.hardware_detect_log import HardwareDetectLog
 from app.models.node_meta import NodeMeta
@@ -633,3 +634,34 @@ async def get_hardware_detect_log(
         "probes": log.probes,
         "hardware_info": log.hardware_info,
     }
+
+
+@router.get("/{kiosk_id}/update-log")
+async def get_update_log(
+    kiosk_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Recent agent self-update records for the node, newest first."""
+    kiosk = await kiosk_service.get_by_id(session, kiosk_id)
+    if kiosk is None:
+        raise HTTPException(status_code=404, detail="Kiosk not found")
+    result = await session.execute(
+        select(AgentUpdateLog)
+        .where(AgentUpdateLog.kiosk_id == kiosk_id)
+        .order_by(AgentUpdateLog.reported_at.desc())
+        .limit(10)
+    )
+    return [
+        {
+            "id": str(row.id),
+            "reported_at": row.reported_at.isoformat(),
+            "issued_at": row.issued_at.isoformat() if row.issued_at else None,
+            "ref": row.ref,
+            "from_version": row.from_version,
+            "to_version": row.to_version,
+            "status": row.status,
+            "command_id": str(row.command_id) if row.command_id else None,
+            "log": row.log,
+        }
+        for row in result.scalars().all()
+    ]

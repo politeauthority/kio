@@ -71,6 +71,11 @@ def _read_version() -> str:
 
 AGENT_VERSION = _read_version()
 
+# Self-update bookkeeping (see scripts/self-update + _report_update_result).
+UPDATE_STATE_FILE = "/opt/kio-agent/update-state.json"   # marker written when an update is issued
+UPDATE_LOG_FILE = "/var/log/kio-agent-update.log"        # behaviors captured by self-update
+VERSION_PREV_FILE = "/opt/kio-agent/agent-version-prev"  # last version we reported, for change detection
+
 def _read_boot_id() -> str:
     try:
         return open("/proc/sys/kernel/random/boot_id").read().strip()
@@ -1064,6 +1069,95 @@ def _report_detect_log(caps: list[str], probes: dict, hw_info: dict) -> None:
         logger.warning("Failed to report detect log: %s", exc)
 
 
+def _report_update_result() -> None:
+    """After a restart, report what the last self-update did — if one ran.
+
+    Triggers when the update marker is present (a dashboard-issued update) or when
+    the running version differs from the last one we recorded (catches CLI/git
+    updates too). First boot just records the version and reports nothing.
+    """
+    if not _agent:
+        return
+    try:
+        marker = None
+        if os.path.exists(UPDATE_STATE_FILE):
+            try:
+                with open(UPDATE_STATE_FILE) as f:
+                    marker = json.load(f)
+            except Exception:
+                marker = {}
+
+        prev_version = None
+        if os.path.exists(VERSION_PREV_FILE):
+            try:
+                prev_version = open(VERSION_PREV_FILE).read().strip() or None
+            except Exception:
+                prev_version = None
+
+        version_changed = prev_version is not None and prev_version != AGENT_VERSION
+
+        # Nothing to report: no update was issued and the version is unchanged
+        # (or this is the very first boot, where prev_version is None).
+        if marker is None and not version_changed:
+            _write_version_prev()
+            return
+
+        # Captured behaviors (last ~16KB) from the self-update run, if present.
+        log_text = ""
+        if os.path.exists(UPDATE_LOG_FILE):
+            try:
+                with open(UPDATE_LOG_FILE, errors="replace") as f:
+                    log_text = f.read()[-16384:]
+            except Exception:
+                log_text = ""
+
+        from_version = (marker or {}).get("from_version") or prev_version
+        # Success when the log says so, else when the version actually advanced.
+        if "RESULT: ok" in log_text:
+            status = "success"
+        elif "RESULT: failed" in log_text:
+            status = "failed"
+        elif AGENT_VERSION != (from_version or AGENT_VERSION):
+            status = "success"
+        else:
+            status = "unknown"
+
+        payload = {
+            "status": status,
+            "log": log_text,
+            "ref": (marker or {}).get("ref"),
+            "from_version": from_version,
+            "to_version": AGENT_VERSION,
+            "issued_at": (marker or {}).get("issued_at"),
+            "command_id": (marker or {}).get("command_id"),
+        }
+        requests.post(
+            f"{_agent.api_url}/agent/update-log",
+            json=payload,
+            headers={"Authorization": f"Bearer {_agent.api_token}"},
+            timeout=10,
+            verify=TLS_VERIFY,
+        )
+        # Reported successfully — clear the marker so we don't re-report, and record
+        # the version we just reported as the new baseline.
+        try:
+            if os.path.exists(UPDATE_STATE_FILE):
+                os.remove(UPDATE_STATE_FILE)
+        except Exception:
+            pass
+        _write_version_prev()
+    except Exception as exc:
+        logger.warning("Failed to report update result: %s", exc)
+
+
+def _write_version_prev() -> None:
+    try:
+        with open(VERSION_PREV_FILE, "w") as f:
+            f.write(AGENT_VERSION)
+    except Exception as exc:
+        logger.debug("Could not write version-prev file: %s", exc)
+
+
 def _report_comms_state() -> None:
     """Upload the on-device comms-state file to the API as node meta on demand.
 
@@ -1687,6 +1781,18 @@ def handle_command(payload: bytes) -> None:
                     f.write(ref)
             except Exception as exc:
                 logger.warning("update_agent: could not write update-ref (%s); defaulting to main", exc)
+            # Drop a marker so the *new* agent (after the restart this triggers) can
+            # report the outcome + captured behaviors back to the API on boot.
+            try:
+                with open(UPDATE_STATE_FILE, "w") as f:
+                    json.dump({
+                        "command_id": command_id,
+                        "ref": ref,
+                        "from_version": AGENT_VERSION,
+                        "issued_at": datetime.now(timezone.utc).isoformat(),
+                    }, f)
+            except Exception as exc:
+                logger.warning("update_agent: could not write update-state marker: %s", exc)
             # Launch detached — self-update re-execs into its own systemd unit so the
             # kio-agent restart at the end of the update can't kill it mid-flight.
             subprocess.Popen(
@@ -2442,6 +2548,10 @@ class KioAgent:
         # Pull node settings on every restart, applying heartbeat/jitter/metadata
         # cadence and reporting success/failure to the event log.
         self._apply_settings(report=True)
+        # If a self-update just ran, report its outcome + captured behaviors. Done
+        # after the settings sync above so the detached updater has had time to
+        # finish writing its log/RESULT line before we read it.
+        _report_update_result()
         # Resume any active playlist before the first heartbeat so the DB's
         # playlist_state (written by the previous run) is still readable here.
         self._resume_state()

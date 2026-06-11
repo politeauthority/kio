@@ -1,6 +1,9 @@
 """Router tests for /agent/* — get_node_kiosk is overridden with a fixed kiosk."""
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock
+
+from app.models.agent_update_log import AgentUpdateLog
 
 # ---------------------------------------------------------------------------
 # POST /agent/heartbeat
@@ -58,6 +61,53 @@ async def test_heartbeat_updates_ip_and_version(agent_client):
     assert kiosk.ip_address == "192.168.1.50"
     assert kiosk.agent_version == "1.2.3"
     assert kiosk.device_type == "pi5"
+
+
+async def test_update_log_creates_row(agent_client):
+    client, kiosk, session = agent_client
+    session.commit = AsyncMock()
+    session.add = MagicMock()
+
+    r = await client.post(
+        "/agent/update-log",
+        json={
+            "status": "success",
+            "log": "RESULT: ok (exit 0)",
+            "ref": "v0.4.0",
+            "from_version": "0.2.0",
+            "to_version": "0.4.0",
+        },
+    )
+
+    assert r.status_code == 204
+    session.add.assert_called_once()
+    row = session.add.call_args[0][0]
+    assert isinstance(row, AgentUpdateLog)
+    assert row.kiosk_id == kiosk.id
+    assert row.status == "success"
+    assert row.to_version == "0.4.0"
+
+
+async def test_update_log_reconciles_command(agent_client):
+    client, kiosk, session = agent_client
+    session.commit = AsyncMock()
+    session.add = MagicMock()
+
+    # Matching dashboard command row the agent's update should reconcile.
+    cmd_id = uuid.uuid4()
+    record = MagicMock(agent_success=None, agent_message=None, agent_at=None)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = record
+    session.execute = AsyncMock(return_value=result)
+
+    r = await client.post(
+        "/agent/update-log",
+        json={"status": "success", "to_version": "0.4.0", "command_id": str(cmd_id)},
+    )
+
+    assert r.status_code == 204
+    assert record.agent_success is True
+    assert record.agent_at is not None
 
 
 async def test_heartbeat_new_boot_logs_event(agent_client):

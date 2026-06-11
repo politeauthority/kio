@@ -33,8 +33,23 @@ if [[ -z "${KIO_UPDATE_DETACHED:-}" ]]; then
     /opt/kio-agent/self-update
 fi
 
-exec >>/var/log/kio-agent-update.log 2>&1
-echo "=== $(date -Is) kio-agent self-update (ref=$BRANCH) ==="
+# Truncate (not append): this log holds the behaviors of the *latest* update only.
+# The new agent reads it on boot and ships it to the API for the node debug view.
+exec >/var/log/kio-agent-update.log 2>&1
+echo "=== $(date -Is) kio-agent self-update START (ref=$BRANCH) ==="
+echo "-- fetching setup.sh from ${BRANCH} and reinstalling (clone, deps, service restart) --"
+# KIO_ALLOW_HTTP=1: this runs with no tty, so pre-acknowledge an http:// API URL
+# (already accepted at install) rather than letting setup.sh's prompt abort the
+# update non-interactively.
+rc=0
 curl -fsSL "https://raw.githubusercontent.com/politeauthority/kio/${BRANCH}/src/pi-agent/setup.sh" \
-  | KIO_BRANCH="$BRANCH" bash
-echo "=== $(date -Is) kio-agent self-update finished ==="
+  | KIO_BRANCH="$BRANCH" KIO_ALLOW_HTTP=1 bash || rc=$?
+# A final RESULT line the agent parses to classify the update (it also falls back to
+# a detected version change if this line hasn't landed yet by report time).
+if [[ "$rc" -eq 0 ]]; then
+  echo "RESULT: ok (exit 0)"
+else
+  echo "RESULT: failed (exit $rc)"
+fi
+echo "=== $(date -Is) kio-agent self-update END ==="
+exit "$rc"
