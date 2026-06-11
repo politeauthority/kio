@@ -48,7 +48,7 @@ Bootstrap the agent straight from GitHub with a single command — it downloads 
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/main/src/pi-agent/setup.sh \
-  | bash -s -- --api-url https://<your-api> --token kio_...
+  | bash -s
 ```
 
 Run it as the kiosk user (not with `sudo`) — `setup.sh` calls `sudo` internally only for the steps that need root, and installs the agent under your user. If you don't pass `--api-url`/`--token`, the script prompts for them (only those two). See [API certificate (TLS) options](#api-certificate-tls-options) below for the cert flag to add (`--accept-cert` is typical for a private cert).

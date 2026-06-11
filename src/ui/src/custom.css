@@ -373,8 +373,13 @@ code {
 
 .main-content {
   flex: 1;
+  min-width: 0;
   padding: calc(var(--topbar-height) + var(--space-xl)) var(--space-xl) var(--space-xl);
   max-width: 1100px;
+  /* Query container so multi-column layouts inside (e.g. .edit-grid) respond to
+     the real available width — which shrinks when the sidebar is expanded —
+     rather than the viewport width. */
+  container-type: inline-size;
 }
 
 /* ── Cards ───────────────────────────────────── */
@@ -398,9 +403,21 @@ code {
   margin: 0 0 var(--space-lg);
 }
 
-@media (max-width: 1100px) {
+/* Collapse to a single column once the content area is too narrow to fit two
+   readable columns. Keyed off the container (content) width, so it reacts to the
+   sidebar expanding/collapsing — not just the viewport. */
+@container (max-width: 900px) {
   .edit-grid {
     column-count: 1;
+  }
+}
+
+/* Fallback for browsers without container query support: approximate by viewport. */
+@supports not (container-type: inline-size) {
+  @media (max-width: 1100px) {
+    .edit-grid {
+      column-count: 1;
+    }
   }
 }
 
@@ -525,6 +542,7 @@ code {
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
   vertical-align: middle;
+  overflow-wrap: anywhere;
 }
 
 .table tr:last-child td { border-bottom: none; }

@@ -36,7 +36,12 @@ async def _offline_sweeper() -> None:
                 # Settings are read every sweep so the health-check timeout (and
                 # purge window) can be tuned live from Settings → Agents.
                 settings_ = await get_global_settings(session)
-                await mark_offline_kiosks(session, settings_["node_offline_threshold_seconds"])
+                await mark_offline_kiosks(
+                    session,
+                    settings_["node_offline_threshold_seconds"],
+                    heartbeat_interval=settings_["heartbeat_interval_seconds"],
+                    heartbeat_jitter=settings_["heartbeat_jitter_seconds"],
+                )
                 # Purge old event-log entries (runs hourly).
                 if ticks % 60 == 0:
                     cutoff = datetime.now(timezone.utc) - timedelta(days=settings_["event_log_purge_days"])

@@ -138,9 +138,37 @@
 
     <!-- Browser Tabs card -->
     <div class="card mt-lg">
-      <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0">
+      <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; gap: 0.5rem; flex-wrap: wrap">
         <span>Browser Tabs</span>
-        <span class="text-xs text-muted">{{ displayTabs.length }} tab{{ displayTabs.length === 1 ? '' : 's' }}</span>
+        <div style="display: flex; align-items: center; gap: 0.5rem">
+          <span class="text-xs text-muted">{{ displayTabs.length }} tab{{ displayTabs.length === 1 ? '' : 's' }}</span>
+          <!-- Tab cycling controls — hidden while a playlist is actively playing,
+               since a playlist already drives the rotation. -->
+          <template v-if="!playlistPlaying">
+            <button class="btn btn-ghost" style="padding: 0.2rem 0.6rem; font-size: 0.8rem" @click="openCycleModal" title="Tab cycling settings">⟳ Cycle</button>
+            <button
+              v-if="tabCyclePlaying"
+              class="btn btn-secondary"
+              style="padding: 0.2rem 0.6rem; font-size: 0.8rem"
+              :disabled="commandsBlocked"
+              @click="stopTabCycle"
+            >■ Stop</button>
+            <button
+              v-else-if="tabCycleEnabled"
+              class="btn btn-primary"
+              style="padding: 0.2rem 0.6rem; font-size: 0.8rem"
+              :disabled="commandsBlocked"
+              @click="startTabCycle"
+            >▶ Start</button>
+          </template>
+        </div>
+      </div>
+
+      <!-- Rough cycle estimate: full loop ≈ interval × open tabs. -->
+      <div v-if="!playlistPlaying && tabCycleEnabled && cycleTabCount" class="text-xs text-muted" style="margin-top: 0.6rem">
+        <span v-if="tabCyclePlaying" style="color: var(--accent)">● Cycling</span><span v-else>Cycle ready</span>
+        — every {{ cycleIntervalSeconds }}s, full loop ≈ {{ fmtCycleEstimate(fullCycleSeconds) }}
+        ({{ cycleTabCount }} tab{{ cycleTabCount === 1 ? '' : 's' }})
       </div>
 
       <div v-if="displayTabs.length === 0" class="text-muted text-sm" style="margin-top: 0.75rem">
@@ -155,7 +183,19 @@
           :style="isTabActive(tab)
             ? 'background: var(--accent-subtle, rgba(99,102,241,0.12)); border-color: var(--accent)'
             : 'background: var(--bg-dark)'"
+          @dragover.prevent
+          @drop="onTabDrop(tab)"
         >
+          <!-- Drag handle: reorders the tab list (and the cycle sequence). Real tabs
+               only — pending placeholders have no stable URL to order by yet. -->
+          <span
+            v-if="!tab.pending"
+            draggable="true"
+            @dragstart="onTabDragStart(tab)"
+            class="text-muted"
+            style="cursor: grab; user-select: none; font-size: 0.9rem; line-height: 1; flex-shrink: 0"
+            title="Drag to reorder"
+          >⠿</span>
           <div style="flex: 1; min-width: 0">
             <div class="text-sm" style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">
               {{ savedUrlFor(tab.url)?.name || tab.title || (tab.pending ? 'Opening…' : '(no title)') }}
@@ -359,6 +399,40 @@
       </div>
     </div>
   </Teleport>
+
+  <!-- Tab cycling settings -->
+  <Teleport to="body">
+    <div v-if="showCycleModal" class="modal-backdrop" @click.self="showCycleModal = false">
+      <div class="modal-box">
+        <h2 class="modal-title">Tab cycling</h2>
+        <p class="text-muted text-sm" style="margin: 0.75rem 0 1.25rem">
+          Automatically rotate this node through its open browser tabs. Enable it to
+          reveal the Start/Stop controls; drag tabs to set the rotation order.
+        </p>
+        <label class="d-flex gap-sm" style="align-items: center; margin-bottom: 1rem; cursor: pointer">
+          <input type="checkbox" v-model="cycleForm.enabled" />
+          <span class="text-sm">Enable tab cycling</span>
+        </label>
+        <div style="margin-bottom: 1.5rem">
+          <label class="form-label" for="cycle-interval">Seconds between rotations</label>
+          <input
+            id="cycle-interval"
+            class="form-control"
+            type="number"
+            min="1"
+            step="1"
+            v-model.number="cycleForm.interval_seconds"
+            :disabled="!cycleForm.enabled"
+            style="max-width: 140px"
+          />
+        </div>
+        <div class="d-flex gap-sm" style="justify-content: flex-end">
+          <button class="btn btn-secondary" @click="showCycleModal = false">Cancel</button>
+          <button class="btn btn-primary" :disabled="commanding" @click="saveCycleConfig">Save</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -400,6 +474,10 @@ let pendingFocusAt = 0
 // Map of tabId -> click time (ms) for tabs the user just hit Refresh on — shown as
 // "refreshing…" until the agent reports a last-reload newer than the click.
 const pendingRefreshTabs = ref({})
+// Map of tabId -> click time (ms) for tabs the user just closed — kept hidden even if
+// a stale heartbeat snapshot still lists them, until the agent confirms removal. Stops
+// the close→reappear→close flicker.
+const pendingCloseTabs = ref({})
 let sse = null
 let logPollInterval = null
 let countdownInterval = null
@@ -419,6 +497,12 @@ const attachedPlaylistItems = ref([])
 const selectedPlaylistId = ref('')
 const showChangePlaylist = ref(false)
 const livePlaylistState = ref(null)
+const liveTabCycleState = ref(null)
+const showCycleModal = ref(false)
+// Editable copy of the node's tab_cycle config, bound to the modal inputs.
+const cycleForm = ref({ enabled: false, interval_seconds: 15 })
+// URL of the tab row currently being dragged, for the reorder interaction.
+const dragTabUrl = ref(null)
 const countdownTick = ref(0)
 
 // A command the agent hasn't acknowledged yet (status 'pending'). The log is
@@ -474,6 +558,20 @@ const kioskId = computed(() => route.params.id)
 const playlistActiveIdx = computed(() => livePlaylistState.value?.idx ?? null)
 const playlistPlaying = computed(() => livePlaylistState.value != null)
 
+// Tab cycling: live running state comes over the heartbeat (tab_cycle_state);
+// the enable flag + interval are persisted per-node in meta.tab_cycle.
+const tabCyclePlaying = computed(() => liveTabCycleState.value != null)
+const tabCycleConfig = computed(() => kiosk.value?.meta?.tab_cycle ?? null)
+const tabCycleEnabled = computed(() => !!tabCycleConfig.value?.enabled)
+const tabOrder = computed(() => kiosk.value?.meta?.tab_order ?? [])
+
+// Rough full-loop estimate: interval × number of open tabs. Prefer the interval
+// the cycle is actually running with, else the configured one.
+const cycleTabCount = computed(() => liveTabs.value.length)
+const cycleIntervalSeconds = computed(() =>
+  Number(liveTabCycleState.value?.interval_seconds ?? tabCycleConfig.value?.interval_seconds) || 15)
+const fullCycleSeconds = computed(() => cycleIntervalSeconds.value * Math.max(1, cycleTabCount.value))
+
 // Best-guess live uptime: the value the node last reported plus the time elapsed
 // since. Only trustworthy while the node is online (regular heartbeats) — if it
 // stopped checking in we can't assume it stayed up (it may have rebooted), so we
@@ -522,6 +620,7 @@ async function refreshLive() {
     liveTabs.value = k.browser_tabs || []
     tabsUpdatedAt.value = Date.now()
     livePlaylistState.value = k.playlist_state ?? null
+    liveTabCycleState.value = k.tab_cycle_state ?? null
   } catch {
     // transient — SSE and the next poll will catch up
   }
@@ -545,6 +644,7 @@ async function load() {
     liveTabs.value = k.browser_tabs || []
     tabsUpdatedAt.value = Date.now()
     livePlaylistState.value = k.playlist_state ?? null
+    liveTabCycleState.value = k.tab_cycle_state ?? null
     availablePlaylists.value = playlists
     attachedPlaylist.value = k.playlist_id
       ? playlists.find(p => p.id === k.playlist_id) ?? null
@@ -676,6 +776,7 @@ async function connectSSE() {
       liveUrl.value = data.current_url || null
       if (data.browser_tabs != null) { liveTabs.value = data.browser_tabs; tabsUpdatedAt.value = Date.now() }
       if ('playlist_state' in data) livePlaylistState.value = data.playlist_state
+      if ('tab_cycle_state' in data) liveTabCycleState.value = data.tab_cycle_state
       if (kiosk.value) kiosk.value.last_seen = new Date().toISOString()
     } catch {}
   })
@@ -757,6 +858,7 @@ async function sendNav() {
       body: JSON.stringify({ url: urlInput.value }),
     })
     livePlaylistState.value = null  // navigating stops the playlist on the node
+    liveTabCycleState.value = null  // …and the tab cycle
     toast.add('URL sent — playlist stopped', 'success')
     urlInput.value = ''
     await loadCommandLog()
@@ -789,11 +891,16 @@ async function openNewTab() {
 
 async function closeTab(tabId) {
   commanding.value = true
+  // Closing the last tab doesn't remove it — the agent navigates it to the default
+  // page instead — so only optimistically hide when other tabs remain. Otherwise the
+  // single tab would vanish and pop back with the default URL.
+  const isLastTab = liveTabs.value.length <= 1
+  if (!isLastTab) markPendingClose(tabId)
   try {
     await apiFetch(`/kiosks/${kioskId.value}/browsers/${tabId}`, { method: 'DELETE' })
-    liveTabs.value = liveTabs.value.filter(t => t.id !== tabId)
     toast.add('Tab closed', 'success')
   } catch {
+    clearPendingClose(tabId)  // un-hide on failure
     toast.add('Failed to close tab', 'error')
   } finally {
     commanding.value = false
@@ -808,7 +915,8 @@ async function activateTab(tabId) {
     // reports it active, then the optimistic override is dropped.
     markPendingFocus(tabId)
     livePlaylistState.value = null  // focusing a tab stops the playlist on the node
-    toast.add('Tab focused — playlist stopped', 'success')
+    liveTabCycleState.value = null  // …and the tab cycle
+    toast.add('Tab focused', 'success')
   } catch {
     toast.add('Failed to focus tab', 'error')
   } finally {
@@ -832,6 +940,126 @@ async function refreshTab(tabId) {
   }
 }
 
+// --- Tab cycling ---
+
+function openCycleModal() {
+  // Seed the form from the persisted config so the modal reflects current settings.
+  const cfg = tabCycleConfig.value
+  cycleForm.value = {
+    enabled: !!cfg?.enabled,
+    interval_seconds: Number(cfg?.interval_seconds) || 15,
+  }
+  showCycleModal.value = true
+}
+
+async function saveCycleConfig() {
+  const interval = Math.max(1, Math.round(Number(cycleForm.value.interval_seconds) || 15))
+  const value = { enabled: !!cycleForm.value.enabled, interval_seconds: interval }
+  commanding.value = true
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/meta/tab_cycle`, {
+      method: 'PUT',
+      body: JSON.stringify({ key: 'tab_cycle', value }),
+    })
+    if (kiosk.value) kiosk.value.meta = { ...kiosk.value.meta, tab_cycle: value }
+    showCycleModal.value = false
+    // If cycling is disabled, make sure it isn't left running; if it's running and
+    // the interval changed, restart so the new cadence takes effect immediately.
+    if (!value.enabled && tabCyclePlaying.value) {
+      await stopTabCycle()
+    } else if (value.enabled && tabCyclePlaying.value) {
+      await startTabCycle()
+    }
+    toast.add('Cycle settings saved', 'success')
+  } catch {
+    toast.add('Failed to save cycle settings', 'error')
+  } finally {
+    commanding.value = false
+  }
+}
+
+async function startTabCycle() {
+  if (blockedByPending()) return
+  commanding.value = true
+  // Flip the button to the running state right away (don't wait for the next
+  // heartbeat to report tab_cycle_state); the heartbeat then replaces this with
+  // the agent's real state. Reverted if the request fails.
+  const interval = Number(tabCycleConfig.value?.interval_seconds) || 15
+  liveTabCycleState.value = { interval_seconds: interval, current_tab_id: null, started_at: new Date().toISOString() }
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/tabs/cycle/start`, { method: 'POST' })
+    toast.add('Tab cycling started', 'success')
+    await loadCommandLog()
+  } catch {
+    liveTabCycleState.value = null
+    toast.add('Failed to start cycling', 'error')
+  } finally {
+    commanding.value = false
+  }
+}
+
+// Compact "full loop" duration, e.g. 45s, 1m 30s, 2m.
+function fmtCycleEstimate(seconds) {
+  const s = Math.round(seconds)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return rem ? `${m}m ${rem}s` : `${m}m`
+}
+
+async function stopTabCycle() {
+  if (blockedByPending()) return
+  commanding.value = true
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/tabs/cycle/stop`, { method: 'POST' })
+    liveTabCycleState.value = null  // clear optimistically; heartbeat confirms
+    toast.add('Tab cycling stopped', 'success')
+    await loadCommandLog()
+  } catch {
+    toast.add('Failed to stop cycling', 'error')
+  } finally {
+    commanding.value = false
+  }
+}
+
+// --- Tab drag-reorder ---
+// CDP can't reorder Chromium's real tab strip, so this persists a dashboard-side
+// order (by URL) in meta.tab_order. It drives the listed order and the cycle
+// sequence. Tabs whose URL isn't in the list fall to the end (see orderTabs).
+
+function onTabDragStart(tab) {
+  dragTabUrl.value = tab.url
+}
+
+function onTabDrop(targetTab) {
+  const fromUrl = dragTabUrl.value
+  dragTabUrl.value = null
+  if (!fromUrl || targetTab.pending || fromUrl === targetTab.url) return
+  // Reorder the URLs of the currently-displayed real tabs, then persist.
+  const urls = displayTabs.value.filter(t => !t.pending).map(t => t.url)
+  const from = urls.indexOf(fromUrl)
+  const to = urls.indexOf(targetTab.url)
+  if (from < 0 || to < 0) return
+  const [moved] = urls.splice(from, 1)
+  urls.splice(to, 0, moved)
+  saveTabOrder(urls)
+}
+
+async function saveTabOrder(urls) {
+  // Optimistically apply so the list reorders instantly.
+  if (kiosk.value) kiosk.value.meta = { ...kiosk.value.meta, tab_order: urls }
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/meta/tab_order`, {
+      method: 'PUT',
+      body: JSON.stringify({ key: 'tab_order', value: urls }),
+    })
+    // If a cycle is running, restart it so it picks up the new order.
+    if (tabCyclePlaying.value) await startTabCycle()
+  } catch {
+    toast.add('Failed to save tab order', 'error')
+  }
+}
+
 function savedUrlFor(tabUrl) {
   if (!tabUrl) return null
   const norm = normUrl(tabUrl)
@@ -851,13 +1079,28 @@ function statusBadgeStyle(code) {
   return base + ' color: var(--text-muted); border-color: var(--border)'
 }
 
-// Real tabs from the agent, plus any optimistic pending tabs whose URL the agent
-// hasn't reported yet. Once a pending tab's URL shows up in liveTabs the watcher
-// below drops the placeholder, so the real (detailed) row takes its place.
+// Order live tabs by the operator's saved order (meta.tab_order, by URL). Tabs
+// whose URL isn't in the list keep their reported order at the end — Array.sort is
+// stable, so equal-rank tabs aren't reshuffled.
+function orderTabs(tabs) {
+  const order = tabOrder.value
+  if (!order || !order.length) return tabs
+  const rank = new Map(order.map((u, i) => [normUrl(u), i]))
+  const rankOf = t => (rank.has(normUrl(t.url)) ? rank.get(normUrl(t.url)) : order.length)
+  return [...tabs].sort((a, b) => rankOf(a) - rankOf(b))
+}
+
+// Real tabs from the agent (in saved order), plus any optimistic pending tabs whose
+// URL the agent hasn't reported yet. Once a pending tab's URL shows up in liveTabs the
+// watcher below drops the placeholder, so the real (detailed) row takes its place.
 const displayTabs = computed(() => {
-  const liveUrls = new Set(liveTabs.value.map(t => normUrl(t.url)))
+  // Hide tabs the user just closed until the agent's snapshot drops them (the
+  // watcher clears the marker), so a stale heartbeat can't flicker them back.
+  const closing = pendingCloseTabs.value
+  const live = liveTabs.value.filter(t => !closing[t.id])
+  const liveUrls = new Set(live.map(t => normUrl(t.url)))
   const unresolved = pendingTabs.value.filter(t => !liveUrls.has(normUrl(t.url)))
-  return [...liveTabs.value, ...unresolved]
+  return [...orderTabs(live), ...unresolved]
 })
 
 // Effective on-screen state: while a Focus is pending, optimistically treat the
@@ -872,6 +1115,7 @@ function hasPendingTabWork() {
   return pendingTabs.value.length > 0
     || pendingFocusTabId.value != null
     || Object.keys(pendingRefreshTabs.value).length > 0
+    || Object.keys(pendingCloseTabs.value).length > 0
 }
 
 // A refresh is confirmed once the agent reports this tab's last reload as newer
@@ -907,6 +1151,16 @@ watch(liveTabs, (tabs) => {
     }
     if (changed) pendingRefreshTabs.value = next
   }
+  const closeIds = Object.keys(pendingCloseTabs.value)
+  if (closeIds.length) {
+    const liveIds = new Set(tabs.map(t => t.id))
+    const next = { ...pendingCloseTabs.value }
+    let changed = false
+    for (const id of closeIds) {
+      if (!liveIds.has(id)) { delete next[id]; changed = true }  // agent confirmed it's gone
+    }
+    if (changed) pendingCloseTabs.value = next
+  }
   if (!hasPendingTabWork()) stopTabPolling()
 })
 
@@ -924,6 +1178,18 @@ function markPendingFocus(tabId) {
 function markPendingRefresh(tabId) {
   pendingRefreshTabs.value = { ...pendingRefreshTabs.value, [tabId]: Date.now() }
   startTabPolling()
+}
+
+function markPendingClose(tabId) {
+  pendingCloseTabs.value = { ...pendingCloseTabs.value, [tabId]: Date.now() }
+  startTabPolling()
+}
+
+function clearPendingClose(tabId) {
+  if (pendingCloseTabs.value[tabId] == null) return
+  const next = { ...pendingCloseTabs.value }
+  delete next[tabId]
+  pendingCloseTabs.value = next
 }
 
 // While tab work is pending, poll the API faster than the 15s background cadence so
@@ -950,6 +1216,13 @@ function startTabPolling() {
       for (const [id] of staleRefresh) delete next[id]
       pendingRefreshTabs.value = next
       toast.add('Refresh is taking longer than expected — the node may be offline', 'warning')
+    }
+    const staleClose = Object.entries(pendingCloseTabs.value).filter(([, ct]) => now - ct > PENDING_TAB_TIMEOUT_MS)
+    if (staleClose.length) {
+      const next = { ...pendingCloseTabs.value }
+      for (const [id] of staleClose) delete next[id]
+      pendingCloseTabs.value = next
+      toast.add('Close is taking longer than expected — the node may be offline', 'warning')
     }
     if (!hasPendingTabWork()) stopTabPolling()
   }, 2000)

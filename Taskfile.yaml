@@ -161,10 +161,10 @@ tasks:
       - task: build-test:api
       - docker run --rm {{.IMAGE}}:test pytest -q {{.CLI_ARGS}}
 
-  db:migrate:
-    desc: Run Alembic migrations to head inside the API container
+  dev:migrate:
+    desc: Run Alembic migrations to head inside the running dev API container
     cmds:
-      - docker compose -f docker/docker-compose.yml --env-file docker/.env exec api uv run alembic upgrade head
+      - docker compose -f docker/docker-compose.yml --env-file docker/.env exec api alembic upgrade head
 
   dev:api:
     desc: Run the API in Docker (requires port-forward:postgres)
@@ -237,6 +237,12 @@ tasks:
       - task: kio-1:deploy
       - task: kio-1:prd
 
+  kio-1:update:
+    desc: Update kio-1 from git — node pulls main from GitHub and reinstalls (keeps config)
+    cmds:
+      - task: _kio:update
+        vars: {HOST: kio-1}
+
   # ---------------------------------------------------------------------------
   # Internal, variabilized kio node tasks. The per-node entrypoints below call
   # these with HOST/CONFIG so every node stays in lockstep — only the hostname
@@ -276,6 +282,22 @@ tasks:
       - ssh {{.HOST}} "sudo systemctl restart kio-agent"
       - echo "{{.HOST}} -> synced agent + {{.CONFIG}}"
 
+  # Update a node straight from git instead of from this machine's working copy.
+  # The node fetches setup.sh from the published repo; setup.sh self-bootstraps
+  # (clones BRANCH from GitHub into a temp dir and re-execs from there), then
+  # reinstalls the agent from that checkout, keeping the node's existing
+  # /etc/kio/kiosk.yaml. So the node tracks what's committed to git — not your
+  # local edits, which is the difference from _kio:install / _kio:sync. Override
+  # the branch with `task kio-N:update BRANCH=feat/x`. `ssh -t` gives it a tty so
+  # a sudo password (or any setup prompt) can be answered.
+  _kio:update:
+    internal: true
+    vars:
+      BRANCH: '{{.BRANCH | default "main"}}'
+    cmds:
+      - ssh -t {{.HOST}} "curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/{{.BRANCH}}/src/pi-agent/setup.sh | KIO_BRANCH={{.BRANCH}} bash"
+      - echo "{{.HOST}} -> updated from git ({{.BRANCH}})"
+
   _kio:logs:
     internal: true
     cmds:
@@ -291,6 +313,12 @@ tasks:
     desc: Deploy kio-2 — scp local source, run setup.sh (keeps config), restart
     cmds:
       - task: _kio:install
+        vars: {HOST: kio-2}
+
+  kio-2:update:
+    desc: Update kio-2 from git — node pulls main from GitHub and reinstalls (keeps config)
+    cmds:
+      - task: _kio:update
         vars: {HOST: kio-2}
 
   kio-2:dev:
@@ -333,6 +361,12 @@ tasks:
     desc: Deploy kio-3 — pull main, layer local source, run setup.sh (keeps config), restart
     cmds:
       - task: _kio:install
+        vars: {HOST: kio-3}
+
+  kio-3:update:
+    desc: Update kio-3 from git — node pulls main from GitHub and reinstalls (keeps config)
+    cmds:
+      - task: _kio:update
         vars: {HOST: kio-3}
 
   kio-3:dev:

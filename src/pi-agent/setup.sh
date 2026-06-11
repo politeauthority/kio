@@ -679,6 +679,21 @@ sudo chmod 600 /etc/kio/kiosk.yaml
 sudo touch /etc/kio/browser-flags
 sudo chown "$TARGET_USER:$TARGET_USER" /etc/kio/browser-flags
 
+# Block Chromium permission prompts outright. The kiosks have no keyboard, so a
+# "site wants to show notifications" popup can never be dismissed and just sits
+# over the content. A managed policy with the default content setting at 2
+# (block) denies silently and stops Chromium from ever showing the prompt — and,
+# being a managed policy, it can't be re-enabled from the UI. Geolocation is the
+# other unprompted-popup of the same class, so block it too. Written to both the
+# `chromium` and `chromium-browser` policy paths so it applies regardless of
+# which package the image ships.
+for _pol_dir in /etc/chromium/policies/managed /etc/chromium-browser/policies/managed; do
+  sudo mkdir -p "$_pol_dir"
+  printf '{\n  "DefaultNotificationsSetting": 2,\n  "DefaultGeolocationSetting": 2\n}\n' \
+    | sudo tee "$_pol_dir/kio-permissions.json" >/dev/null
+done
+echo "  Chromium notification/geolocation prompts blocked via managed policy"
+
 # Ensure HDMI is always active even when the display is off at boot.
 # hdmi_force_hotplug makes the firmware always assert HPD so the Pi outputs a signal.
 # With vc4-kms-v3d + disable_fw_kms_setup=1 (Raspberry Pi OS default), the kernel DRM
