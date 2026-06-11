@@ -184,15 +184,20 @@ tasks:
       - npm run dev
 
   git-tag:
-    desc: Commit the version + build stamp and create a git tag for the current version
+    desc: Commit the version + build stamp and (re)create the release tag for the current version
     vars:
       BUILD:
         sh: cat BUILD
     cmds:
       - git add VERSION BUILD kubernetes-manifests/envs/prd/kustomization.yaml
-      - git commit -m "release v{{.VERSION}} (build {{.BUILD}})"
-      - git tag -a "v{{.VERSION}}" -m "Release v{{.VERSION}} (build {{.BUILD}})"
-      - echo "Tagged v{{.VERSION}} build {{.BUILD}} -- git push origin main --tags"
+      # Tolerate a no-op commit so re-running a release doesn't abort here.
+      - git diff --cached --quiet || git commit -m "release v{{.VERSION}} (build {{.BUILD}})"
+      # -f so re-releasing a version (a new build of the same VERSION) moves the
+      # v{VERSION} tag to the latest build instead of failing "tag already exists".
+      # The dashboard agent-updater points nodes at this tag, so it must track the
+      # newest deployed build of the version.
+      - git tag -f -a "v{{.VERSION}}" -m "Release v{{.VERSION}} (build {{.BUILD}})"
+      - 'echo "Tagged v{{.VERSION}} build {{.BUILD}} -- push with git push origin main && git push --force origin v{{.VERSION}}"'
 
   ha:deploy:
     desc: Deploy the kio Home Assistant integration and restart HA core
