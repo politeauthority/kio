@@ -10,6 +10,9 @@ vars:
   IMAGE_UI: "{{.HARBOR}}/kio-ui"
   VERSION:
     sh: cat VERSION
+  # Home Assistant integration manifest — its "version" is kept in sync with VERSION
+  # by the bump tasks (HACS/HA require a version field that matches each release).
+  MANIFEST: "src/ha-integration/custom_components/kio/manifest.json"
   KIO_DIR:
     sh: bash -c '. .env 2>/dev/null; echo "${KIO_DIR:-/home/pi/kio}"'
   MQTT_HOST:
@@ -33,10 +36,12 @@ tasks:
       - kubectl get secret harbor-registry -n kio-stg --ignore-not-found | grep -q harbor-registry || kubectl get secret harbor-registry -n kio-dev -o json | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.metadata.namespace)' | kubectl apply -n kio-stg -f -
       - kubectl apply -k kubernetes-manifests/envs/stg/
 
-  # Every build is tagged twice: a rolling tag the kustomize overlays point at
-  # (dev-latest / stg-<branch> / <semver>) plus an immutable per-build tag suffixed
-  # with the BUILD number, so every build is preserved in Harbor. KIO_VERSION carries
-  # the SemVer build metadata (+build.N) and is reported by the live app at /_version.
+  # Non-prod builds (dev / stg) are tagged twice: a rolling tag the kustomize overlays
+  # point at (dev-latest / stg-<branch>) plus an immutable per-build tag suffixed with the
+  # BUILD number, so every CI-churned build is preserved in Harbor; KIO_VERSION carries the
+  # +build.N metadata (reported at /_version). PRODUCTION is the exception — it's a clean
+  # single SemVer tag (<version>) with no build number, since each prod release is a unique
+  # patch version, not a rebuild.
   build-dev:
     desc: Build the kio-api image tagged dev-latest (linux/amd64)
     vars:
@@ -47,11 +52,10 @@ tasks:
 
   build-prd:
     desc: Build the kio-api image tagged with the current version (linux/amd64)
-    vars:
-      BUILD:
-        sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 --target production --build-arg VERSION={{.VERSION}}+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.VERSION}} -t {{.IMAGE}}:{{.VERSION}}-build.{{.BUILD}} .
+      # Production images carry a clean SemVer tag only — no build number. Build
+      # numbers are a non-prod (dev/stg) concept for CI-churned rebuilds.
+      - docker buildx build --platform linux/amd64 --target production --build-arg VERSION={{.VERSION}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.VERSION}} .
 
   build-stg:
     desc: "Build the kio-api staging image — includes the test suite (usage: task build-stg BRANCH=feat/my-feature)"
@@ -77,11 +81,8 @@ tasks:
 
   build-ui-prd:
     desc: Build the kio-ui image tagged with the current version (linux/amd64)
-    vars:
-      BUILD:
-        sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.VERSION}} -t {{.IMAGE_UI}}:{{.VERSION}}-build.{{.BUILD}} .
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.VERSION}} .
 
   build-ui-stg:
     desc: "Build the kio-ui staging image with branch banner (usage: task build-ui-stg BRANCH=feat/my-feature)"
@@ -124,19 +125,28 @@ tasks:
     desc: Bump major version (0.1.0 -> 1.0.0)
     cmds:
       - python3 -c "v=open('VERSION').read().strip().split('.'); v[0]=str(int(v[0])+1); v[1]='0'; v[2]='0'; open('VERSION','w').write('.'.join(v)+'\n')"
+      - task: sync:manifest-version
       - echo "-> v$(cat VERSION)"
 
   bump:minor:
     desc: Bump minor version (0.1.0 -> 0.2.0)
     cmds:
       - python3 -c "v=open('VERSION').read().strip().split('.'); v[1]=str(int(v[1])+1); v[2]='0'; open('VERSION','w').write('.'.join(v)+'\n')"
+      - task: sync:manifest-version
       - echo "-> v$(cat VERSION)"
 
   bump:patch:
     desc: Bump patch version (0.1.0 -> 0.1.1)
     cmds:
       - python3 -c "v=open('VERSION').read().strip().split('.'); v[2]=str(int(v[2])+1); open('VERSION','w').write('.'.join(v)+'\n')"
+      - task: sync:manifest-version
       - echo "-> v$(cat VERSION)"
+
+  sync:manifest-version:
+    desc: Sync the HA integration manifest.json "version" to the current VERSION file
+    cmds:
+      - python3 -c "import json; v=open('VERSION').read().strip(); p='{{.MANIFEST}}'; m=json.load(open(p)); m['version']=v; open(p,'w').write(json.dumps(m, indent=2)+'\n')"
+      - echo "-> manifest {{.MANIFEST}} version $(cat VERSION)"
 
   bump:build:
     desc: Increment the monotonic build number (BUILD file). Run once per release.
@@ -414,7 +424,8 @@ tasks:
     cmds:
       - kubectl port-forward -n q-postgres svc/q-postgres-rw 5432:5432
 
-  # Push tasks send both the rolling tag and the immutable -build.N tag.
+  # Non-prod push tasks send both the rolling tag and the immutable -build.N tag; the prod
+  # push sends only the clean <version> tag.
   push-dev:
     desc: Push the dev API image to Harbor
     vars:
@@ -426,12 +437,8 @@ tasks:
 
   push-prd:
     desc: Push the versioned API image to Harbor
-    vars:
-      BUILD:
-        sh: cat BUILD
     cmds:
       - docker push {{.IMAGE}}:{{.VERSION}}
-      - docker push {{.IMAGE}}:{{.VERSION}}-build.{{.BUILD}}
 
   push-stg:
     desc: "Push the staging API image to Harbor (usage: task push-stg BRANCH=feat/my-feature)"
@@ -456,12 +463,8 @@ tasks:
 
   push-ui-prd:
     desc: Push the versioned UI image to Harbor
-    vars:
-      BUILD:
-        sh: cat BUILD
     cmds:
       - docker push {{.IMAGE_UI}}:{{.VERSION}}
-      - docker push {{.IMAGE_UI}}:{{.VERSION}}-build.{{.BUILD}}
 
   push-ui-stg:
     desc: "Push the staging UI image to Harbor (usage: task push-ui-stg BRANCH=feat/my-feature)"
@@ -489,7 +492,7 @@ tasks:
   release-prd:
     desc: "Full production release: build API + UI, push, stamp kustomization, deploy, git-tag"
     cmds:
-      - task: bump:build
+      # No bump:build — production images are versioned by SemVer (patch), not build number.
       - task: stamp-prd
       - task: build-prd
       - task: push-prd
