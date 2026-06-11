@@ -2566,7 +2566,7 @@ class KioAgent:
         input_thread = threading.Thread(target=self._input_monitor_loop, daemon=True)
         input_thread.start()
 
-        logger.info("kio agent running (kiosk_id=%s)", self.kiosk_id)
+        logger.info("kio agent running — version=%s kiosk_id=%s", AGENT_VERSION, self.kiosk_id)
         try:
             self._stop.wait()
         except KeyboardInterrupt:

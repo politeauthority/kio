@@ -840,6 +840,9 @@ async function connectSSE() {
       if (data.browser_tabs != null) { liveTabs.value = data.browser_tabs; tabsUpdatedAt.value = Date.now() }
       if ('playlist_state' in data) livePlaylistState.value = data.playlist_state
       if ('tab_cycle_state' in data) liveTabCycleState.value = data.tab_cycle_state
+      // Reflect a new agent version live (e.g. after an update) so the version and
+      // the "update available" badge refresh without a page reload.
+      if ('agent_version' in data && kiosk.value) kiosk.value.agent_version = data.agent_version
       if (kiosk.value) kiosk.value.last_seen = new Date().toISOString()
     } catch {}
   })

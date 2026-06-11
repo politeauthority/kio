@@ -129,6 +129,7 @@ async def heartbeat(
             "browser_tabs": kiosk.browser_tabs,
             "playlist_state": kiosk.playlist_state,
             "tab_cycle_state": kiosk.tab_cycle_state,
+            "agent_version": kiosk.agent_version,
         },
     )
 
