@@ -40,7 +40,22 @@
           </div>
           <div v-if="kiosk.agent_version">
             <div class="text-xs text-muted" style="margin-bottom: 4px">AGENT VERSION</div>
-            <span class="text-sm">{{ kiosk.agent_version }}</span>
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap">
+              <span class="text-sm">{{ kiosk.agent_version }}</span>
+              <span
+                v-if="agentOutdated"
+                class="text-xs"
+                style="padding: 0.1rem 0.45rem; border-radius: var(--radius-sm); white-space: nowrap; background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning)"
+              >update available</span>
+              <button
+                v-if="agentOutdated"
+                class="btn btn-secondary"
+                style="padding: 0.15rem 0.55rem; font-size: 0.75rem"
+                :disabled="commandsBlocked"
+                @click="showUpdateModal = true"
+              >Update agent</button>
+            </div>
+            <div v-if="agentOutdated" class="text-xs text-muted" style="margin-top: 3px">latest: {{ latestAgentVersion }}</div>
           </div>
           <div>
             <div class="text-xs text-muted" style="margin-bottom: 4px">LAST SEEN</div>
@@ -400,6 +415,24 @@
     </div>
   </Teleport>
 
+  <!-- Agent update confirmation modal -->
+  <Teleport to="body">
+    <div v-if="showUpdateModal" class="modal-backdrop" @click.self="showUpdateModal = false">
+      <div class="modal-box">
+        <h2 class="modal-title">Update {{ kiosk?.name }} agent?</h2>
+        <p class="text-muted text-sm" style="margin: 0.75rem 0 1.5rem">
+          The node will pull
+          <code>{{ latestAgentVersion }}</code> from git and restart the agent
+          (~30s offline). It's currently on <code>{{ kiosk?.agent_version }}</code>.
+        </p>
+        <div class="d-flex gap-sm" style="justify-content: flex-end">
+          <button class="btn btn-secondary" @click="showUpdateModal = false">Cancel</button>
+          <button class="btn btn-primary" :disabled="commanding" @click="confirmUpdateAgent">Update</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- Tab cycling settings -->
   <Teleport to="body">
     <div v-if="showCycleModal" class="modal-backdrop" @click.self="showCycleModal = false">
@@ -455,6 +488,9 @@ const loading = ref(true)
 const commanding = ref(false)
 const urlInput = ref('')
 const showRebootModal = ref(false)
+const showUpdateModal = ref(false)
+// Base agent version the server expects (from GET /_version); null on a dev server.
+const latestAgentVersion = ref(null)
 
 const liveStatus = ref(null)
 const liveUrl = ref(null)
@@ -664,6 +700,14 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // Best-effort: learn the version the server expects so we can flag an outdated
+  // agent. Non-fatal — a missing/dev value just means "don't flag".
+  try {
+    const v = await apiFetch('/_version')
+    latestAgentVersion.value = v?.agent_version ?? null
+  } catch {
+    latestAgentVersion.value = null
+  }
 }
 
 async function attachPlaylist() {
@@ -785,6 +829,41 @@ async function connectSSE() {
 async function confirmReboot() {
   showRebootModal.value = false
   await sendCommand('reboot')
+}
+
+// Compare two dotted version strings numerically. Returns true when `a` is strictly
+// older than `b`. Falls back to plain inequality if either doesn't parse cleanly.
+function versionIsOlder(a, b) {
+  const parse = s => String(s).split('.').map(n => parseInt(n, 10))
+  const pa = parse(a), pb = parse(b)
+  if (pa.some(Number.isNaN) || pb.some(Number.isNaN)) return a !== b
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0, y = pb[i] ?? 0
+    if (x !== y) return x < y
+  }
+  return false
+}
+
+// Outdated only when we know both the node's version and the server's expected
+// version, and the node's is older. (Dev servers report null → never flagged.)
+const agentOutdated = computed(() =>
+  !!kiosk.value?.agent_version &&
+  !!latestAgentVersion.value &&
+  versionIsOlder(kiosk.value.agent_version, latestAgentVersion.value))
+
+async function confirmUpdateAgent() {
+  showUpdateModal.value = false
+  if (blockedByPending()) return
+  commanding.value = true
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/agent/update`, { method: 'POST' })
+    toast.add('Update started — the node will pull the latest code and restart', 'success')
+    await loadCommandLog()
+  } catch {
+    toast.add('Failed to start update', 'error')
+  } finally {
+    commanding.value = false
+  }
 }
 
 // Belt-and-suspenders for the disabled buttons: forms can still submit via Enter,

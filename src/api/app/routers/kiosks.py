@@ -15,6 +15,7 @@ from app.models.playlist import Playlist
 from app.mqtt import publish_command, publish_nav
 from app.schemas.kiosk import KioskCreate, KioskRead, KioskUpdate
 from app.services import kiosk_service
+from app.version import agent_update_ref
 
 router = APIRouter(prefix="/kiosks", tags=["kiosks"])
 
@@ -422,6 +423,25 @@ async def stop_tab_cycle(
     if kiosk is None:
         raise HTTPException(status_code=404, detail="Kiosk not found")
     dispatch_command(session, kiosk_id, command="stop_tab_cycle", payload={"command": "stop_tab_cycle"})
+    await session.commit()
+
+
+@router.post("/{kiosk_id}/agent/update", status_code=204)
+async def update_agent(
+    kiosk_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Tell a node to pull the latest agent code from git and restart.
+
+    The server dictates the git ref (its own release tag, or main in dev) so the
+    node lands on a build compatible with this API rather than whatever is on main.
+    """
+    kiosk = await kiosk_service.get_by_id(session, kiosk_id)
+    if kiosk is None:
+        raise HTTPException(status_code=404, detail="Kiosk not found")
+    ref = agent_update_ref()
+    dispatch_command(session, kiosk_id, command="update_agent", subject=ref,
+                     payload={"command": "update_agent", "ref": ref})
     await session.commit()
 
 

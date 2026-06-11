@@ -163,9 +163,11 @@ async def migrations() -> dict:
 
 @app.get("/_version")
 async def version() -> dict:
-    import os
+    from app.version import agent_expected_version, server_version
 
-    return {"version": os.environ.get("KIO_VERSION", "dev")}
+    # agent_version is the base version the server expects nodes to run, so the
+    # dashboard can flag a node whose reported version is older.
+    return {"version": server_version(), "agent_version": agent_expected_version()}
 
 
 @app.get("/_health")

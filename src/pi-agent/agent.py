@@ -1676,6 +1676,25 @@ def handle_command(payload: bytes) -> None:
             _report_command("reboot", True, command_id=command_id)
             subprocess.run(["sudo", "reboot"], check=False)
             return
+        elif command == "update_agent":
+            # The API dictates which git ref to update to (its own release tag, or
+            # main in dev) so the node lands on a build compatible with the server.
+            # The ref travels via a file because the sudoers entry is an exact,
+            # no-argument match on /opt/kio-agent/self-update.
+            ref = (cmd.get("ref") or "main").strip()
+            try:
+                with open("/opt/kio-agent/update-ref", "w") as f:
+                    f.write(ref)
+            except Exception as exc:
+                logger.warning("update_agent: could not write update-ref (%s); defaulting to main", exc)
+            # Launch detached — self-update re-execs into its own systemd unit so the
+            # kio-agent restart at the end of the update can't kill it mid-flight.
+            subprocess.Popen(
+                ["sudo", "/opt/kio-agent/self-update"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            _report_command("update_agent", True, f"Update started (ref {ref})", command_id=command_id)
+            return
         elif command == "display_off":
             _set_display_power(False)
         elif command == "display_on":
