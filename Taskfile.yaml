@@ -266,7 +266,7 @@ tasks:
       - scp -r src/pi-agent/. {{.HOST}}:/tmp/kio-deploy
       - scp VERSION {{.HOST}}:/tmp/kio-deploy/VERSION
       - "{{if .CONFIG}}scp {{.CONFIG}} {{.HOST}}:/tmp/kio-setup-config.yaml{{else}}true{{end}}"
-      - ssh -t {{.HOST}} "sudo bash /tmp/kio-deploy/setup.sh --local {{if .CONFIG}}--config /tmp/kio-setup-config.yaml{{end}}"
+      - ssh -t {{.HOST}} "sudo bash /tmp/kio-deploy/setup.sh --local --allow-http {{if .CONFIG}}--config /tmp/kio-setup-config.yaml{{end}}"
       - "{{if .CONFIG}}ssh {{.HOST}} 'rm -f /tmp/kio-setup-config.yaml'{{else}}true{{end}}"
       - ssh {{.HOST}} "rm -rf /tmp/kio-deploy"
 
@@ -300,7 +300,7 @@ tasks:
     vars:
       BRANCH: '{{.BRANCH | default "main"}}'
     cmds:
-      - ssh -t {{.HOST}} "curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/{{.BRANCH}}/src/pi-agent/setup.sh | KIO_BRANCH={{.BRANCH}} bash"
+      - ssh -t {{.HOST}} "curl -fsSL https://raw.githubusercontent.com/politeauthority/kio/{{.BRANCH}}/src/pi-agent/setup.sh | KIO_BRANCH={{.BRANCH}} KIO_ALLOW_HTTP=1 bash"
       - echo "{{.HOST}} -> updated from git ({{.BRANCH}})"
 
   _kio:logs:

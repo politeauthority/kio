@@ -35,6 +35,9 @@ fi
 
 exec >>/var/log/kio-agent-update.log 2>&1
 echo "=== $(date -Is) kio-agent self-update (ref=$BRANCH) ==="
+# KIO_ALLOW_HTTP=1: this runs with no tty, so pre-acknowledge an http:// API URL
+# (already accepted at install) — otherwise setup.sh's HTTP-confirmation prompt
+# aborts the update non-interactively.
 curl -fsSL "https://raw.githubusercontent.com/politeauthority/kio/${BRANCH}/src/pi-agent/setup.sh" \
-  | KIO_BRANCH="$BRANCH" bash
+  | KIO_BRANCH="$BRANCH" KIO_ALLOW_HTTP=1 bash
 echo "=== $(date -Is) kio-agent self-update finished ==="
