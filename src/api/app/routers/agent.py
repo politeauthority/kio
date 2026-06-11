@@ -356,31 +356,42 @@ async def get_state(
 ) -> dict:
     """Return last active state for boot-time resume.
 
-    Only returns a playlist if it was actively playing before the last reboot
-    (indicated by a non-null playlist_state). The agent calls this once on
-    startup, before the first heartbeat clears the stored state.
+    Two kinds of state survive a reboot here, both read from the values the last
+    heartbeat stored before the node went down:
+
+    - `playlist`: a playlist, but only if it was actively playing (non-null
+      playlist_state). When present the agent resumes it and ignores `tabs`.
+    - `tabs`: the web pages the node had open, so the agent can reopen them when
+      no playlist is playing. The CDP target id is dropped (it doesn't survive a
+      restart); only the url and which tab was focused matter for restore.
+
+    The agent calls this once on startup, before the first heartbeat clears the
+    stored state.
     """
-    if not kiosk.playlist_id or kiosk.playlist_state is None:
-        return {"playlist": None}
+    tabs = [
+        {"url": t["url"], "active": bool(t.get("active"))}
+        for t in (kiosk.browser_tabs or [])
+        if isinstance(t, dict) and (t.get("url") or "").startswith(("http://", "https://"))
+    ]
 
-    result = await session.execute(
-        select(Playlist)
-        .where(Playlist.id == kiosk.playlist_id)
-        .options(selectinload(Playlist.items))
-    )
-    playlist = result.scalar_one_or_none()
-    if not playlist or not playlist.items:
-        return {"playlist": None}
+    playlist = None
+    if kiosk.playlist_id and kiosk.playlist_state is not None:
+        result = await session.execute(
+            select(Playlist)
+            .where(Playlist.id == kiosk.playlist_id)
+            .options(selectinload(Playlist.items))
+        )
+        row = result.scalar_one_or_none()
+        if row and row.items:
+            playlist = {
+                "id": str(row.id),
+                "name": row.name,
+                "refresh_seconds": row.refresh_interval_seconds,
+                "items": [
+                    {"url": it.url, "duration_seconds": it.duration_seconds}
+                    for it in row.items
+                ],
+                "last_idx": kiosk.playlist_state.get("idx", 0),
+            }
 
-    return {
-        "playlist": {
-            "id": str(playlist.id),
-            "name": playlist.name,
-            "refresh_seconds": playlist.refresh_interval_seconds,
-            "items": [
-                {"url": it.url, "duration_seconds": it.duration_seconds}
-                for it in playlist.items
-            ],
-            "last_idx": kiosk.playlist_state.get("idx", 0),
-        }
-    }
+    return {"playlist": playlist, "tabs": tabs}

@@ -1946,7 +1946,11 @@ class KioAgent:
 
         playlist = state.get("playlist")
         if not playlist or not playlist.get("items"):
-            logger.info("Boot resume: no active playlist to resume")
+            # No playlist — reopen whatever tabs the node had before the reboot,
+            # falling back to the default page if there were none worth restoring.
+            if self._restore_tabs(state.get("tabs") or []):
+                return
+            logger.info("Boot resume: no active playlist or saved tabs to resume")
             self._show_default_page()
             return
 
@@ -1966,6 +1970,49 @@ class KioAgent:
             start_idx=last_idx,
             refresh_seconds=int(playlist.get("refresh_seconds", PLAYLIST_REFRESH_SECONDS)),
         )
+
+    def _restore_tabs(self, tabs: list[dict]) -> bool:
+        """Reopen the tabs the node had open before its last reboot.
+
+        browser-start has already launched Chromium on the start_url (one tab), so
+        we reuse that tab for the first saved URL, open the rest as background tabs,
+        then refocus whichever tab was active before the reboot — leaving the node
+        with exactly the set of pages it had open. Returns True if any tab was
+        restored, False when there was nothing worth restoring (idle/default page).
+        """
+        restorable = [
+            t for t in tabs
+            if t.get("url") and is_safe_url(t["url"]) and not t["url"].startswith("about:")
+        ]
+        if not restorable:
+            return False
+
+        if not _wait_for_chromium():
+            logger.warning("Boot resume: Chromium not ready, skipping tab restore")
+            return False
+
+        logger.info("Boot resume: restoring %d tab(s) open before reboot", len(restorable))
+        active_url = next((t["url"] for t in restorable if t.get("active")), restorable[0]["url"])
+
+        # Reuse the tab browser-start already opened for the first URL; open the rest.
+        ids_by_url: dict[str, str] = {}
+        navigate(restorable[0]["url"])
+        first = _get_tab()
+        if first:
+            ids_by_url[restorable[0]["url"]] = first["id"]
+        for t in restorable[1:]:
+            opened = _open_tab(t["url"])
+            if opened:
+                ids_by_url[t["url"]] = opened["id"]
+
+        # Restore focus to whichever tab was active before the reboot.
+        active_id = ids_by_url.get(active_url)
+        if active_id:
+            try:
+                requests.get(f"{CDP_BASE}/json/activate/{active_id}", timeout=5)
+            except Exception as exc:
+                logger.warning("Boot resume: failed to focus restored tab: %s", exc)
+        return True
 
     def _show_default_page(self) -> None:
         """Show the global default page when the node is idle at boot.
