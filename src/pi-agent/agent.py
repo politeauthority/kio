@@ -776,6 +776,77 @@ class PlaylistPlayer:
 
 
 # ---------------------------------------------------------------------------
+# Tab cycler
+# ---------------------------------------------------------------------------
+
+class TabCycler:
+    """Rotates focus through the node's currently-open browser tabs on a timer.
+
+    Unlike PlaylistPlayer this never opens, preloads, or closes tabs — it only
+    activates whatever tabs already exist, so newly opened or closed tabs are
+    picked up automatically on the next tick. Tabs are visited in the operator's
+    saved order (tab_order, a list of URLs); tabs whose URL isn't in that list
+    are appended in CDP order. The rotation advances from whichever tab is
+    currently on-screen, so a manual Focus simply shifts where the next hop lands.
+    """
+
+    def __init__(self, interval_seconds: int, tab_order: list[str] | None = None,
+                 on_rotate=None) -> None:
+        self._interval = max(1, int(interval_seconds))
+        self._tab_order = [u for u in (tab_order or []) if isinstance(u, str)]
+        self._started_at = time.time()
+        self._current_tab_id: str | None = None
+        # Called after each rotation so the agent can push a heartbeat immediately,
+        # keeping the dashboard's on-screen-tab highlight in sync with the rotation
+        # instead of lagging until the next routine heartbeat.
+        self._on_rotate = on_rotate
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._thread.join(timeout=2)
+
+    def _ordered_tabs(self, tabs: list[dict]) -> list[dict]:
+        """Order live tabs by the saved URL order; unknown URLs keep CDP order at the end."""
+        if not self._tab_order:
+            return tabs
+        rank = {url: i for i, url in enumerate(self._tab_order)}
+        return sorted(tabs, key=lambda t: rank.get(t.get("url", ""), len(rank)))
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self._interval):
+            tabs = self._ordered_tabs(_get_tabs())
+            if not tabs:
+                continue
+            # Advance from the tab that's currently on-screen (falling back to the
+            # one we last activated), so a manual Focus mid-cycle is respected.
+            cur = next((i for i, t in enumerate(tabs) if t.get("active")), None)
+            if cur is None:
+                cur = next((i for i, t in enumerate(tabs) if t["id"] == self._current_tab_id), -1)
+            nxt = tabs[(cur + 1) % len(tabs)]
+            if _activate_tab(nxt["id"]):
+                self._current_tab_id = nxt["id"]
+                if self._on_rotate is not None:
+                    try:
+                        self._on_rotate()
+                    except Exception as exc:
+                        logger.debug("tab cycle on_rotate hook failed: %s", exc)
+
+    def current_state(self) -> dict:
+        return {
+            "interval_seconds": self._interval,
+            "current_tab_id": self._current_tab_id,
+            "started_at": datetime.fromtimestamp(
+                self._started_at, tz=timezone.utc
+            ).isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Command handler
 # ---------------------------------------------------------------------------
 
@@ -1459,6 +1530,16 @@ def handle_command(payload: bytes) -> None:
                 _agent._player.goto(idx)
             else:
                 logger.warning("playlist_goto: no active playlist player")
+        elif command == "start_tab_cycle":
+            interval = int(cmd.get("interval_seconds", 15))
+            tab_order = cmd.get("tab_order", []) or []
+            if _agent:
+                _agent._start_tab_cycle(interval, tab_order=tab_order)
+            else:
+                logger.warning("start_tab_cycle: agent not ready")
+        elif command == "stop_tab_cycle":
+            if _agent:
+                _agent._stop_tab_cycle()
         elif command == "open_tab":
             url = cmd.get("url", "")
             if url:
@@ -1486,6 +1567,7 @@ def handle_command(payload: bytes) -> None:
             if len(page_tabs) <= 1:
                 if _agent:
                     _agent._stop_playlist()
+                    _agent._stop_tab_cycle()
                     default_url = _agent.default_url
                 else:
                     default_url = "about:blank"
@@ -1497,10 +1579,12 @@ def handle_command(payload: bytes) -> None:
         elif command == "activate_tab":
             tab_id = cmd.get("tab_id", "")
             if tab_id:
-                # Focusing a tab is a manual takeover — stop any running playlist so
-                # it doesn't rotate away from the tab the operator just selected.
+                # Focusing a tab is a manual takeover — stop any running playlist or
+                # tab cycle so it doesn't rotate away from the tab the operator just
+                # selected.
                 if _agent:
                     _agent._stop_playlist()
+                    _agent._stop_tab_cycle()
                 requests.get(f"{CDP_BASE}/json/activate/{tab_id}", timeout=5)
                 logger.info("Activated tab: %s", tab_id)
             else:
@@ -1692,6 +1776,7 @@ class KioAgent:
         self.nav_topic     = f"{self.topic_prefix}/kiosks/{self.kiosk_id}/nav"
         self._stop = threading.Event()
         self._player: PlaylistPlayer | None = None
+        self._cycler: TabCycler | None = None
         self._current_input: str | None = None  # synced by set_input + monitor thread
         # Dispatch MQTT command handling off the network loop thread so long-running
         # operations (preload, wait_for_chromium) don't block keepalive ping/pong.
@@ -1784,9 +1869,28 @@ class KioAgent:
     def _start_playlist(self, playlist_id: str, items: list[dict], playlist_name: str = "",
                         start_idx: int = 0, refresh_seconds: int = PLAYLIST_REFRESH_SECONDS) -> None:
         self._stop_playlist()
+        # A playlist takes over tab rotation, so stop any manual tab cycle first.
+        self._stop_tab_cycle()
         self._player = PlaylistPlayer(playlist_id, items, playlist_name=playlist_name,
                                       start_idx=start_idx, refresh_seconds=refresh_seconds)
         self._player.start()
+
+    def _stop_tab_cycle(self) -> None:
+        if self._cycler is not None:
+            self._cycler.stop()
+            self._cycler = None
+
+    def _start_tab_cycle(self, interval_seconds: int, tab_order: list[str] | None = None) -> None:
+        self._stop_tab_cycle()
+        # Cycling and a playlist both drive tab focus — they're mutually exclusive.
+        self._stop_playlist()
+        # Push a heartbeat after each rotation so the dashboard reflects the focused
+        # tab promptly instead of waiting for the next routine (~30s) heartbeat.
+        self._cycler = TabCycler(interval_seconds, tab_order=tab_order,
+                                 on_rotate=lambda: self._post_heartbeat())
+        self._cycler.start()
+        logger.info("Tab cycle started: every %ss over %d ordered urls",
+                    interval_seconds, len(tab_order or []))
 
     # --- HTTP heartbeat ---
 
@@ -2018,6 +2122,7 @@ class KioAgent:
             "current_url":        get_current_url() if online else None,
             "browser_tabs":       _get_tabs() if online else [],
             "playlist_state":     self._player.current_state() if self._player is not None else None,
+            "tab_cycle_state":    self._cycler.current_state() if self._cycler is not None else None,
             "reporting_api_url":  self.api_url,
         }
         if include_metadata or not online:
@@ -2292,6 +2397,7 @@ class KioAgent:
                 cid = data.get("command_id")
                 if url:
                     self._stop_playlist()
+                    self._stop_tab_cycle()
                     navigate(url)
                     _report_command(f"navigate: {url}", True, command_id=cid)
                 else:

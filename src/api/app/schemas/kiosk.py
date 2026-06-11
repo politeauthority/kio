@@ -37,5 +37,6 @@ class KioskRead(BaseModel):
     browser_flags: list[str]
     browser_tabs: list[dict]
     playlist_state: dict | None
+    tab_cycle_state: dict | None
     created_at: datetime
     updated_at: datetime

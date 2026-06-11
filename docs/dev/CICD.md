@@ -190,7 +190,7 @@ venv), so migrations run identically whether the image is `production` or `test`
 To run migrations manually against the dev compose stack:
 
 ```bash
-task db:migrate       # docker compose exec api ... alembic upgrade head
+task dev:migrate      # docker compose exec api alembic upgrade head
 ```
 
 ---
@@ -237,7 +237,7 @@ Harbor pull credentials live in the `harbor-registry` image-pull secret;
 | `task build-test:api` | Build the API `test` image locally (`$HARBOR/kio-api:test`) |
 | `task test:api:docker` | Build the `test` image and run the unit suite inside it |
 | `task test:api` | Run the unit suite on the host via `uv` |
-| `task db:migrate` | Run Alembic migrations against the dev compose stack |
+| `task dev:migrate` | Run Alembic migrations against the dev compose stack |
 | `task teardown-stg` | Delete the staging Deployments |
 
 See `task --list` for the full set.

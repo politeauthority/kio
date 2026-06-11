@@ -30,6 +30,7 @@ class HeartbeatPayload(BaseModel):
     display_on: bool | None = None
     browser_tabs: list[dict] | None = None
     playlist_state: dict | None = None
+    tab_cycle_state: dict | None = None
     reporting_api_url: str | None = None
     # Sent only on the hourly metadata heartbeat
     features: list[str] | None = None
@@ -115,6 +116,8 @@ async def heartbeat(
         kiosk.browser_tabs = payload.browser_tabs
     # Always update playlist_state (None clears it when playback stops)
     kiosk.playlist_state = payload.playlist_state
+    # Always update tab_cycle_state (None clears it when cycling stops)
+    kiosk.tab_cycle_state = payload.tab_cycle_state
 
     await session.commit()
 
@@ -125,6 +128,7 @@ async def heartbeat(
             "current_url": payload.current_url,
             "browser_tabs": kiosk.browser_tabs,
             "playlist_state": kiosk.playlist_state,
+            "tab_cycle_state": kiosk.tab_cycle_state,
         },
     )
 

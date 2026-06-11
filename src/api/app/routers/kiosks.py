@@ -384,6 +384,47 @@ async def stop_playlist(
     await session.commit()
 
 
+# Default seconds between tab rotations when the node's tab_cycle meta omits an interval.
+DEFAULT_TAB_CYCLE_INTERVAL = 15
+
+
+@router.post("/{kiosk_id}/tabs/cycle/start", status_code=204)
+async def start_tab_cycle(
+    kiosk_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Begin rotating the node through its open browser tabs.
+
+    Interval and tab order come from the node's persisted meta (`tab_cycle` and
+    `tab_order`), so the same call resumes cycling with the operator's current
+    configuration after a config or order change.
+    """
+    kiosk = await kiosk_service.get_by_id(session, kiosk_id)
+    if kiosk is None:
+        raise HTTPException(status_code=404, detail="Kiosk not found")
+    cfg = kiosk.meta.get("tab_cycle") or {}
+    interval = int(cfg.get("interval_seconds") or DEFAULT_TAB_CYCLE_INTERVAL)
+    tab_order = kiosk.meta.get("tab_order") or []
+    dispatch_command(session, kiosk_id, command="start_tab_cycle", payload={
+        "command": "start_tab_cycle",
+        "interval_seconds": interval,
+        "tab_order": tab_order,
+    })
+    await session.commit()
+
+
+@router.post("/{kiosk_id}/tabs/cycle/stop", status_code=204)
+async def stop_tab_cycle(
+    kiosk_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    kiosk = await kiosk_service.get_by_id(session, kiosk_id)
+    if kiosk is None:
+        raise HTTPException(status_code=404, detail="Kiosk not found")
+    dispatch_command(session, kiosk_id, command="stop_tab_cycle", payload={"command": "stop_tab_cycle"})
+    await session.commit()
+
+
 class PlaylistGotoPayload(BaseModel):
     index: int = Field(..., ge=0)
 

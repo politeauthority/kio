@@ -104,15 +104,39 @@ async def update_kiosk_from_heartbeat(kiosk_id: str, payload: dict) -> None:
         await session.commit()
 
 
-async def mark_offline_kiosks(session: AsyncSession, threshold: int | None = None) -> None:
+# Extra slack added on top of a heartbeat interval before a node may be declared
+# offline. Covers normal network/processing jitter so a single late heartbeat
+# doesn't trip a transition.
+OFFLINE_GRACE_SECONDS = 15
+
+
+async def mark_offline_kiosks(
+    session: AsyncSession,
+    threshold: int | None = None,
+    *,
+    heartbeat_interval: int | None = None,
+    heartbeat_jitter: int = 0,
+) -> None:
     """Mark kiosks that haven't been seen within the threshold as offline and log the event.
 
     `threshold` (seconds) is the live value from app_settings; when omitted it
     falls back to the static config default so existing callers keep working.
+
+    Hysteresis: a node is never declared offline until it has been silent for clearly
+    longer than one heartbeat interval (interval + jitter + grace). Without this floor a
+    threshold set near the heartbeat cadence (e.g. 30s threshold with a 30s heartbeat)
+    makes a perfectly healthy node flap offline→online on ordinary jitter, producing
+    contradictory "node offline" / "node online" events in the same second.
     """
     if threshold is None:
         threshold = settings.node_offline_threshold_seconds
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=threshold)
+    if heartbeat_interval is None:
+        from app.services.settings_service import AGENT_SETTING_DEFAULTS
+        heartbeat_interval = AGENT_SETTING_DEFAULTS["heartbeat_interval_seconds"]
+
+    floor = heartbeat_interval + heartbeat_jitter + OFFLINE_GRACE_SECONDS
+    effective = max(threshold, floor)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=effective)
 
     # Find kiosks that are about to be marked offline so we can log events
     result = await session.execute(select(Kiosk).where(Kiosk.last_seen < cutoff).where(Kiosk.status == "online"))
@@ -133,7 +157,7 @@ async def mark_offline_kiosks(session: AsyncSession, threshold: int | None = Non
                     command="node offline",
                     source="system",
                     agent_success=False,
-                    agent_message=f"No heartbeat for >{threshold}s",
+                    agent_message=f"No heartbeat for >{effective}s",
                     agent_at=datetime.now(timezone.utc),
                 )
             )
