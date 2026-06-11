@@ -1494,13 +1494,24 @@ def _report_command(command: str, success: bool, message: str | None = None,
         logger.warning("Failed to report command result for %s: %s", command, exc)
 
 
-def _report_update_result() -> None:
-    """After a restart, log the outcome of a self-update — if one was attempted.
+def _clear_update_marker() -> None:
+    try:
+        os.remove(UPDATE_STATE_FILE)
+    except Exception:
+        pass
 
-    The update_agent handler leaves a marker before restarting; on boot we read it
-    and emit update_agent_success or update_agent_failure to the event log. Success
-    is inferred from the version actually advancing (with the update log as backup
-    detail), then the marker is cleared so it's reported only once.
+
+def _report_update_result() -> None:
+    """After an update, log its outcome — and reboot to fully apply it.
+
+    The update_agent handler leaves a marker before the self-update restarts the
+    agent. This runs in two phases across that reboot:
+      1. First boot after the reinstall: confirm the version advanced, log
+         "update_agent_rebooting", flag the marker, and reboot (so kernel-cmdline /
+         group changes from setup.sh actually take effect).
+      2. Boot after the reboot: the marker's reboot_pending flag tells us to report
+         update_agent_success and clear the marker.
+    A failed update reports update_agent_failure and does NOT reboot.
     """
     if not _agent:
         return
@@ -1516,9 +1527,18 @@ def _report_update_result() -> None:
         ref = marker.get("ref") or "?"
         from_version = marker.get("from_version")
         to_version = AGENT_VERSION
-        changed = bool(from_version) and from_version != to_version
 
-        # Tail of the updater's log for context (best effort).
+        # Phase 2 — already rebooted for this update: report success and finish.
+        if marker.get("reboot_pending"):
+            _report_command(
+                "update_agent_success", True,
+                f"Updated {from_version or '?'} -> {to_version} (ref {ref}) and rebooted",
+            )
+            _clear_update_marker()
+            return
+
+        # Phase 1 — first boot after the reinstall. Decide success vs failure.
+        changed = bool(from_version) and from_version != to_version
         tail = ""
         if os.path.exists(UPDATE_LOG_FILE):
             try:
@@ -1527,22 +1547,35 @@ def _report_update_result() -> None:
             except Exception:
                 tail = ""
 
-        if changed or "RESULT: ok" in tail:
-            _report_command(
-                "update_agent_success", True,
-                f"Updated {from_version or '?'} -> {to_version} (ref {ref})",
-            )
-        else:
+        if not (changed or "RESULT: ok" in tail):
             msg = f"Update to ref {ref} did not change version (still {to_version})"
             if tail:
                 msg = f"{msg}: {tail[-200:]}"
             _report_command("update_agent_failure", False, msg)
+            _clear_update_marker()
+            return
 
-        # Reported — clear the marker so we don't re-report on the next boot.
+        # Success — flag the marker so the post-reboot boot reports success, then
+        # reboot. Persist the flag BEFORE rebooting so a failed write can't loop.
+        marker["reboot_pending"] = True
         try:
-            os.remove(UPDATE_STATE_FILE)
-        except Exception:
-            pass
+            with open(UPDATE_STATE_FILE, "w") as f:
+                json.dump(marker, f)
+        except Exception as exc:
+            logger.warning("update: could not set reboot_pending (%s); reporting success without reboot", exc)
+            _report_command(
+                "update_agent_success", True,
+                f"Updated {from_version or '?'} -> {to_version} (ref {ref})",
+            )
+            _clear_update_marker()
+            return
+
+        _report_command(
+            "update_agent_rebooting", True,
+            f"Rebooting for update {from_version or '?'} -> {to_version} (ref {ref})",
+        )
+        logger.info("Rebooting to apply update %s -> %s", from_version, to_version)
+        subprocess.run(["sudo", "reboot"], check=False)
     except Exception as exc:
         logger.warning("Failed to report update result: %s", exc)
 
