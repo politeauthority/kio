@@ -36,6 +36,8 @@ class AgentSettingsUpdate(BaseModel):
     settings_checkin_seconds: int | None = None
     node_offline_threshold_seconds: int | None = None
     event_log_purge_days: int | None = None
+    brightness_enabled: int | None = None
+    brightness_default: int | None = None
 
 
 @router.get("")

@@ -84,6 +84,11 @@ const nodeItems = computed(() => {
       description: 'Default heartbeat and checkin intervals applied to all nodes.',
     },
     {
+      to: '/settings/display',
+      title: 'Display',
+      description: 'Brightness control gate and default luminance for capable displays.',
+    },
+    {
       to: '/settings/hosts',
       title: 'Hosts',
       description: 'Global /etc/hosts entries injected into every node at startup.',

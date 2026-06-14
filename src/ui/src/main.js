@@ -20,6 +20,7 @@ import SettingsFeatureFlags from './settings/SettingsFeatureFlags.vue'
 import SettingsAgents from './settings/SettingsAgents.vue'
 import SettingsApiKeys from './settings/SettingsApiKeys.vue'
 import SettingsTimingDefaults from './settings/SettingsTimingDefaults.vue'
+import SettingsDisplay from './settings/SettingsDisplay.vue'
 import SettingsHosts from './settings/SettingsHosts.vue'
 import SettingsBrowserFlags from './settings/SettingsBrowserFlags.vue'
 import SettingsDefaultPage from './settings/SettingsDefaultPage.vue'
@@ -48,6 +49,7 @@ const router = createRouter({
     { path: '/settings/agents', component: SettingsAgents, meta: { title: 'Agents' } },
     { path: '/settings/api-keys', component: SettingsApiKeys, meta: { title: 'API Keys' } },
     { path: '/settings/timing', component: SettingsTimingDefaults, meta: { title: 'Timing' } },
+    { path: '/settings/display', component: SettingsDisplay, meta: { title: 'Display' } },
     { path: '/settings/hosts', component: SettingsHosts, meta: { title: 'Hosts' } },
     { path: '/settings/browser-flags', component: SettingsBrowserFlags, meta: { title: 'Browser Flags' } },
     { path: '/settings/default-page', component: SettingsDefaultPage, meta: { title: 'Default Page' } },

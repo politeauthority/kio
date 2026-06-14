@@ -52,6 +52,45 @@ def test_effective_settings_handles_none():
 
 
 # ---------------------------------------------------------------------------
+# Brightness gate: per-node overridable + node-affecting (refreshes live)
+# ---------------------------------------------------------------------------
+
+
+def test_brightness_gate_defaults_off():
+    assert ss.AGENT_SETTING_DEFAULTS["brightness_enabled"] == 0
+
+
+def test_brightness_keys_are_overridable_and_node_affecting():
+    for key in ("brightness_enabled", "brightness_default"):
+        assert key in ss.OVERRIDABLE_KEYS
+        assert key in ss.NODE_AFFECTING_KEYS
+
+
+def test_effective_settings_applies_per_node_brightness_gate():
+    merged = ss.effective_settings({**ss.AGENT_SETTING_DEFAULTS}, {"brightness_enabled": 1})
+    assert merged["brightness_enabled"] == 1  # one node enabled while the fleet default stays off
+
+
+def test_coerce_brightness_enabled_bounds():
+    assert ss.coerce_setting("brightness_enabled", "1") == 1
+    with pytest.raises(ValueError):
+        ss.coerce_setting("brightness_enabled", 2)  # gate is 0/1 only
+
+
+async def test_put_notifies_nodes_on_brightness_gate_change(client):
+    before = dict(ss.AGENT_SETTING_DEFAULTS)
+    after = {**before, "brightness_enabled": 1}
+    with (
+        patch("app.routers.agent_settings.settings_service.get_global_settings", new=AsyncMock(return_value=before)),
+        patch("app.routers.agent_settings.settings_service.update_global_settings", new=AsyncMock(return_value=after)),
+        patch("app.routers.agent_settings._notify_all_nodes", new=AsyncMock()) as notify,
+    ):
+        r = await client.put("/settings/agent", json={"brightness_enabled": 1})
+    assert r.status_code == 200
+    notify.assert_awaited_once()  # flipping the gate bounces the fleet so nodes refresh live
+
+
+# ---------------------------------------------------------------------------
 # GET /settings/agent (dashboard) — empty DB returns defaults
 # ---------------------------------------------------------------------------
 

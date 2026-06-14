@@ -504,6 +504,8 @@ const overrideFields = [
   { key: 'heartbeat_interval_seconds', label: 'Heartbeat interval', min: 5, max: 3600 },
   { key: 'heartbeat_jitter_seconds', label: 'Heartbeat jitter', min: 0, max: 300 },
   { key: 'metadata_interval_seconds', label: 'Metadata heartbeat interval', min: 60, max: 86400 },
+  { key: 'brightness_enabled', label: 'Brightness enabled (0 = off, 1 = on)', min: 0, max: 1 },
+  { key: 'brightness_default', label: 'Default brightness (%)', min: 0, max: 100 },
 ]
 const agentDefaults = ref({})
 const overrides = ref({})

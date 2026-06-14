@@ -121,6 +121,20 @@
               </div>
             </div>
 
+            <div v-if="kiosk.features.includes('brightness') && !hiddenControls.has('brightness')">
+              <div class="text-xs text-muted" style="margin-bottom: 0.5rem">BRIGHTNESS</div>
+              <div class="d-flex gap-sm" style="align-items: center">
+                <input
+                  type="range" min="0" max="100" step="5"
+                  v-model.number="liveBrightness"
+                  :disabled="commandsBlocked"
+                  @change="sendBrightness(liveBrightness)"
+                  style="flex: 1"
+                />
+                <span class="text-xs text-muted" style="width: 36px; text-align: right">{{ liveBrightness }}%</span>
+              </div>
+            </div>
+
           </div>
           <hr style="border-color: var(--border); margin: 1rem 0" />
         </template>
@@ -515,6 +529,7 @@ const liveStatus = ref(null)
 const liveUrl = ref(null)
 const liveInput = ref(null)
 const liveDisplayOn = ref(null)
+const liveBrightness = ref(80)  // initialized from the last commanded value (meta.brightness)
 const liveUptimeSeconds = ref(null)
 const liveUptimeReportedAt = ref(null)
 const liveTabs = ref([])
@@ -694,6 +709,7 @@ async function load() {
     liveUrl.value = k.current_url
     liveInput.value = k.current_input || null
     liveDisplayOn.value = k.display_on ?? null
+    liveBrightness.value = k.meta?.brightness ?? 80
     liveUptimeSeconds.value = k.uptime_seconds ?? null
     liveUptimeReportedAt.value = k.uptime_reported_at ?? null
     liveTabs.value = k.browser_tabs || []
@@ -946,6 +962,23 @@ async function sendInput(input) {
     toast.add(`Input switched to ${input}`, 'success')
   } catch {
     toast.add('Failed to switch input', 'error')
+  } finally {
+    commanding.value = false
+  }
+}
+
+async function sendBrightness(value) {
+  if (blockedByPending()) return
+  commanding.value = true
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/brightness`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    })
+    liveBrightness.value = value
+    toast.add(`Brightness set to ${value}%`, 'success')
+  } catch {
+    toast.add('Failed to set brightness', 'error')
   } finally {
     commanding.value = false
   }

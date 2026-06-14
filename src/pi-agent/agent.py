@@ -919,6 +919,24 @@ def detect_capabilities() -> tuple[list[str], dict]:
     except Exception as exc:
         probes["input_switch"] = {"cmd": "ddcutil getvcp 60", "error": str(exc), "detected": False}
 
+    # brightness: ddcutil can read/write VCP 10 (luminance). This records hardware
+    # support only; whether the control is actually exposed is additionally gated by
+    # the brightness_enabled setting (see _effective_features / _apply_settings).
+    try:
+        r = subprocess.run(["ddcutil", "getvcp", "10"], capture_output=True, text=True, timeout=15)
+        detected = r.returncode == 0
+        probes["brightness"] = {
+            "cmd": "ddcutil getvcp 10",
+            "returncode": r.returncode,
+            "stdout": r.stdout.strip()[:1000],
+            "stderr": r.stderr.strip()[:500],
+            "detected": detected,
+        }
+        if detected:
+            caps.append("brightness")
+    except Exception as exc:
+        probes["brightness"] = {"cmd": "ddcutil getvcp 10", "error": str(exc), "detected": False}
+
     logger.info("Detected capabilities: %s", caps)
     return caps, probes
 
@@ -1456,6 +1474,25 @@ def _set_display_power(on: bool) -> None:
         logger.warning("Display %s failed: wlopm, CEC, and ddcutil all failed", "on" if on else "off")
 
 
+def _set_brightness(value: int) -> bool:
+    """Set display luminance via DDC/CI VCP 10 (0–100). Returns True on success.
+
+    DDC/CI only — unlike power there is no CEC/wlopm fallback, because neither has
+    a luminance command. A node whose display lacks DDC/CI never advertises the
+    brightness capability, so this is reached only on capable hardware.
+    """
+    value = max(0, min(100, int(value)))
+    r = subprocess.run(
+        ["ddcutil", "setvcp", "10", str(value)],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode == 0:
+        logger.info("Brightness set to %d via ddcutil VCP 10", value)
+        return True
+    logger.warning("Brightness set failed (exit %d): %s", r.returncode, r.stderr.strip())
+    return False
+
+
 def _report_file_error(path: str, process: str = "agent") -> None:
     if not _agent:
         return
@@ -1862,6 +1899,21 @@ def handle_command(payload: bytes) -> None:
                 logger.warning("Unknown input: %s", input_name)
                 _report_command(f"set_input: {input_name}", False, "Unknown input", command_id=command_id)
                 return
+        elif command == "set_brightness":
+            # Gate check (defense in depth — the dashboard already hides the control
+            # when the feature is disabled for this node).
+            if not (_agent and _agent._brightness_enabled):
+                _report_command("set_brightness", False, "Brightness feature disabled for this node",
+                                command_id=command_id)
+                return
+            value = cmd.get("value")
+            if value is None:
+                _report_command("set_brightness", False, "Missing value", command_id=command_id)
+                return
+            if not _set_brightness(value):
+                _report_command("set_brightness", False, "ddcutil setvcp 10 failed", command_id=command_id)
+                return
+            _agent._current_brightness = max(0, min(100, int(value)))
         else:
             logger.warning("Unknown command: %s", command)
             _report_command(command or "unknown", False, "Unknown command", command_id=command_id)
@@ -1911,6 +1963,12 @@ class KioAgent:
         self._hb_jitter          = 0
         self._metadata_interval  = 3600
         self._settings_checkin   = 300
+        # Brightness feature gate + default luminance, delivered per node via
+        # GET /agent/settings and refreshed live on sync_settings/checkin. Seeded
+        # off so the feature stays dark until the gate is enabled for this node.
+        self._brightness_enabled = False
+        self._brightness_default = 80
+        self._current_brightness: int | None = None  # last value we applied
 
         env_tag = self.topic_prefix.replace("/", "-")
         self.client = mqtt.Client(
@@ -2280,6 +2338,16 @@ class KioAgent:
         except Exception:
             return None
 
+    def _effective_features(self) -> list[str]:
+        """Features to advertise to the dashboard: detected hardware capabilities,
+        minus any that are gated off. `brightness` hardware support is real but only
+        exposed while the brightness_enabled gate is on, so the dashboard slider
+        appears/disappears with the gate without any UI-side flag lookup."""
+        feats = self.features
+        if not self._brightness_enabled and "brightness" in feats:
+            feats = [f for f in feats if f != "brightness"]
+        return feats
+
     def _post_heartbeat(self, online: bool = True, include_metadata: bool = False,
                         include_features: bool = False) -> None:
         # Hardware state (ddcutil/CEC) is slow — only poll on the hourly metadata
@@ -2301,7 +2369,7 @@ class KioAgent:
         # reason to update them (explicit detect, or detected display drift), never
         # on routine heartbeats — otherwise they'd clobber dashboard edits hourly.
         if include_features:
-            payload["features"] = self.features
+            payload["features"] = self._effective_features()
         if include_metadata:
             payload["device_type"]    = self._get_device_type()
             payload["ip_address"]     = self._get_ip_address()
@@ -2442,6 +2510,25 @@ class KioAgent:
             "Applied settings from %s: heartbeat=%ds jitter=%ds metadata=%ds checkin=%ds",
             source, self._hb_interval, self._hb_jitter, self._metadata_interval, self._settings_checkin,
         )
+
+        # Brightness feature gate + default. Pulled here so a gate flip (global or
+        # per-node) reaches the node live via sync_settings, not just on reboot.
+        prev_enabled = self._brightness_enabled
+        prev_default = self._brightness_default
+        self._brightness_enabled = bool(int(s.get("brightness_enabled", 0)))
+        self._brightness_default = max(0, min(100, int(s.get("brightness_default", self._brightness_default))))
+        gate_changed = self._brightness_enabled != prev_enabled
+        if self._brightness_enabled and "brightness" in self.features:
+            # Apply the configured default when the gate turns on or the default
+            # itself changes — but NOT on every checkin, which would clobber a
+            # manual slider change between checkins.
+            if gate_changed or self._brightness_default != prev_default:
+                if _set_brightness(self._brightness_default):
+                    self._current_brightness = self._brightness_default
+        if gate_changed:
+            # Re-advertise features so the dashboard shows/hides the slider live
+            # (the effective feature list reflects the gate — see _effective_features).
+            self._post_heartbeat(include_features=True)
 
         res = s.get("display_resolution")
         if res and isinstance(res, dict) and res.get("output") and res.get("mode"):

@@ -19,6 +19,13 @@ AGENT_SETTING_DEFAULTS: dict[str, int] = {
     "settings_checkin_seconds": 300,
     "node_offline_threshold_seconds": 90,
     "event_log_purge_days": 7,
+    # Display brightness (DDC/CI VCP 10). Shipped behind a gate: brightness_enabled
+    # defaults to 0 (off) so the feature dark-launches and is rolled out per node or
+    # fleet-wide by flipping this. brightness_default is the luminance applied when
+    # the gate is enabled. Both are node-affecting + overridable so a single kiosk
+    # can be enabled/tuned independently and picks the change up live (see below).
+    "brightness_enabled": 0,
+    "brightness_default": 80,
 }
 
 # key -> (min, max) inclusive bounds used to validate writes
@@ -29,6 +36,8 @@ SETTING_BOUNDS: dict[str, tuple[int, int]] = {
     "settings_checkin_seconds": (30, 86400),
     "node_offline_threshold_seconds": (10, 3600),
     "event_log_purge_days": (1, 365),
+    "brightness_enabled": (0, 1),
+    "brightness_default": (0, 100),
 }
 
 # Settings a single node is allowed to override from the global default.
@@ -36,6 +45,8 @@ OVERRIDABLE_KEYS: set[str] = {
     "heartbeat_interval_seconds",
     "heartbeat_jitter_seconds",
     "metadata_interval_seconds",
+    "brightness_enabled",
+    "brightness_default",
 }
 
 # Settings whose change requires nodes to pull and reload. Excludes purely
@@ -46,6 +57,8 @@ NODE_AFFECTING_KEYS: set[str] = {
     "heartbeat_jitter_seconds",
     "metadata_interval_seconds",
     "settings_checkin_seconds",
+    "brightness_enabled",
+    "brightness_default",
 }
 
 # NodeMeta key under which per-node overrides are stored.

@@ -237,6 +237,37 @@ async def test_set_invalid_input_returns_400(client):
 
 
 # ---------------------------------------------------------------------------
+# PUT /kiosks/{id}/brightness
+# ---------------------------------------------------------------------------
+
+
+async def test_set_brightness_valid_dispatches_command(client):
+    kiosk = make_kiosk()
+    with (
+        patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=kiosk),
+        patch("app.routers.kiosks.publish_command") as mock_pub,
+    ):
+        r = await client.put(f"/kiosks/{kiosk.id}/brightness", json={"value": 40})
+    assert r.status_code == 204
+    # The set_brightness command (with the value) is published to the node.
+    payload = mock_pub.call_args.args[1]
+    assert payload["command"] == "set_brightness"
+    assert payload["value"] == 40
+
+
+async def test_set_brightness_out_of_bounds_returns_422(client):
+    for bad in (-1, 101):
+        r = await client.put(f"/kiosks/{uuid.uuid4()}/brightness", json={"value": bad})
+        assert r.status_code == 422, f"value {bad} should be rejected"
+
+
+async def test_set_brightness_kiosk_not_found(client):
+    with patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=None):
+        r = await client.put(f"/kiosks/{uuid.uuid4()}/brightness", json={"value": 50})
+    assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # GET /kiosks/{id}/command-log
 # ---------------------------------------------------------------------------
 
