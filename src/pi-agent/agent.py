@@ -355,6 +355,14 @@ def _tab_info(tab: dict) -> dict:
         return {"age_seconds": None, "active": False, "http_status": None}
 
 
+def _normalize_url(url: str) -> str:
+    """Canonical form for deciding two tabs show the same page: drop the URL
+    fragment (same document) and a single trailing slash. Query strings are kept
+    — they usually denote a genuinely different page."""
+    u = (url or "").split("#", 1)[0]
+    return u[:-1] if u.endswith("/") else u
+
+
 def _get_tabs() -> list[dict]:
     try:
         resp = requests.get(f"{CDP_BASE}/json", timeout=2)
@@ -1687,6 +1695,9 @@ def handle_command(payload: bytes) -> None:
                 tab = _open_tab(url)
                 if tab:
                     logger.info("Opened new tab: %s", url)
+                    # If this URL was already open, drop the just-created duplicate.
+                    if _agent:
+                        _agent._close_duplicate_tabs()
                 else:
                     logger.warning("open_tab: failed to create tab for %s", url)
                     _report_command(f"open_tab: {url}", False, "Tab creation failed", command_id=command_id)
@@ -1814,6 +1825,15 @@ def handle_command(payload: bytes) -> None:
         elif command == "reload":
             reload_page()
         elif command == "reboot":
+            # Snapshot the tabs open *right now* so they're restored on boot. The
+            # periodic heartbeat that normally saves them can be up to an interval
+            # stale, and the operator expects the current tab set to come back.
+            if _agent:
+                try:
+                    _agent._close_duplicate_tabs()
+                    _agent._post_heartbeat()
+                except Exception as exc:
+                    logger.warning("reboot: final tab snapshot failed: %s", exc)
             _report_command("reboot", True, command_id=command_id)
             subprocess.run(["sudo", "reboot"], check=False)
             return
@@ -2377,6 +2397,39 @@ class KioAgent:
             feats = [f for f in feats if f != "brightness"]
         return feats
 
+    def _close_duplicate_tabs(self) -> int:
+        """Close tabs whose page is already open in another tab, keeping one.
+
+        For each URL open more than once, keep the active tab (else the oldest)
+        and close the rest, logging each closure to the event log. Skipped while a
+        playlist or tab cycle is running — those deliberately drive the tab set and
+        may preload repeated content, so we must not pull tabs out from under them.
+        Never closes the last remaining tab (one per URL always survives).
+        """
+        if self._player is not None or self._cycler is not None:
+            return 0
+        tabs = [t for t in _get_tabs() if (t.get("url") or "").startswith(("http://", "https://"))]
+        if len(tabs) <= 1:
+            return 0
+        groups: dict[str, list[dict]] = {}
+        for t in tabs:
+            groups.setdefault(_normalize_url(t["url"]), []).append(t)
+        closed = 0
+        for group in groups.values():
+            if len(group) < 2:
+                continue
+            # Keep the active tab, else the oldest; close the newer duplicates.
+            group.sort(key=lambda t: (not t.get("active"), -(t.get("age_seconds") or 0)))
+            for dupe in group[1:]:
+                _close_tab(dupe["id"])
+                closed += 1
+                logger.info("Closed duplicate tab for %s", dupe["url"])
+                _report_command(
+                    f"close_duplicate_tab: {dupe['url']}", True,
+                    "Closed a duplicate tab (page already open in another tab)",
+                )
+        return closed
+
     def _post_heartbeat(self, online: bool = True, include_metadata: bool = False,
                         include_features: bool = False) -> None:
         # Hardware state (ddcutil/CEC) is slow — only poll on the hourly metadata
@@ -2658,6 +2711,7 @@ class KioAgent:
             is_meta = now >= next_metadata
             if is_meta:
                 next_metadata = now + self._metadata_interval
+            self._close_duplicate_tabs()
             self._post_heartbeat(include_metadata=is_meta)
             if is_meta:
                 self._check_display_drift()
