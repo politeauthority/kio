@@ -48,14 +48,19 @@ tasks:
       BUILD:
         sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 --target production --build-arg VERSION=dev-latest+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:dev-latest -t {{.IMAGE}}:dev-build.{{.BUILD}} .
+      # --load exports the image to the local docker store so the separate
+      # push-dev step (docker push) finds it. Required with the docker-container
+      # buildx driver; a no-op with the plain `docker` driver used in CI.
+      - docker buildx build --platform linux/amd64 --target production --build-arg VERSION=dev-latest+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:dev-latest -t {{.IMAGE}}:dev-build.{{.BUILD}} --load .
 
   build-prd:
     desc: Build the kio-api image tagged with the current version (linux/amd64)
     cmds:
       # Production images carry a clean SemVer tag only — no build number. Build
       # numbers are a non-prod (dev/stg) concept for CI-churned rebuilds.
-      - docker buildx build --platform linux/amd64 --target production --build-arg VERSION={{.VERSION}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.VERSION}} .
+      # --load so the separate push-prd step finds the image locally (required
+      # with the docker-container buildx driver; no-op with the docker driver).
+      - docker buildx build --platform linux/amd64 --target production --build-arg VERSION={{.VERSION}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.VERSION}} --load .
 
   build-stg:
     desc: "Build the kio-api staging image — includes the test suite (usage: task build-stg BRANCH=feat/my-feature)"
@@ -81,12 +86,14 @@ tasks:
       BUILD:
         sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:dev-latest -t {{.IMAGE_UI}}:dev-build.{{.BUILD}} .
+      # --load so push-ui-dev finds the image locally (docker-container driver).
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:dev-latest -t {{.IMAGE_UI}}:dev-build.{{.BUILD}} --load .
 
   build-ui-prd:
     desc: Build the kio-ui image tagged with the current version (linux/amd64)
     cmds:
-      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.VERSION}} .
+      # --load so push-ui-prd finds the image locally (docker-container driver).
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.VERSION}} --load .
 
   build-ui-stg:
     desc: "Build the kio-ui staging image with branch banner (usage: task build-ui-stg BRANCH=feat/my-feature)"
