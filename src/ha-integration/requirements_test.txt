@@ -1,0 +1,6 @@
+# Test dependencies for the kio Home Assistant integration.
+# Run with: task ha:test   (or, from this dir: pytest)
+# pytest-homeassistant-custom-component pins a matching homeassistant version,
+# which brings in the HA test harness (the `hass` fixture, MockConfigEntry, etc).
+pytest-homeassistant-custom-component
+aioresponses

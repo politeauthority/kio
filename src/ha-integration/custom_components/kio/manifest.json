@@ -1,7 +1,7 @@
 {
   "domain": "kio",
   "name": "Kio",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "codeowners": [],
   "documentation": "https://github.com/politeauthority/kio",
   "issue_tracker": "https://github.com/politeauthority/kio/issues",

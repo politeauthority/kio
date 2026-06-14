@@ -11,20 +11,26 @@ For the improvement backlog and implementation notes see `src/ha-integration/PLA
 
 ```
 src/ha-integration/custom_components/kio/
-├── __init__.py          # entry setup/teardown, platform loading
+├── __init__.py          # entry setup/teardown, platform loading, domain services
 ├── manifest.json        # HA integration metadata
 ├── const.py             # DOMAIN, PLATFORMS, config key names
 ├── coordinator.py       # DataUpdateCoordinator — polls GET /kiosks, sends commands
-├── entity.py            # KioEntity base class — device_info, availability
+├── entity.py            # KioEntity base + setup_kio_platform() dynamic-add helper
 ├── config_flow.py       # UI setup wizard (API URL + key, validates on submit)
-├── binary_sensor.py     # Online/offline
-├── sensor.py            # Current URL, Last Seen, Agent Version, IP Address
-├── button.py            # Reload, Reboot, Detect Capabilities, Standby, Wake
-├── switch.py            # Display Power (conditional on display_power feature)
-├── select.py            # Display Input (conditional on input_switch feature)
+├── binary_sensor.py     # Online/offline; Display On (display_power feature)
+├── sensor.py            # Status, Current URL, Last Seen, Uptime, Hostname, Device Type, Agent Version, IP
+├── button.py            # Reload, Reboot, Detect Capabilities, Update Agent, Standby/Wake (cec)
+├── switch.py            # Display Power (display_power feature)
+├── select.py            # Display Input (input_switch feature)
+├── number.py            # Brightness slider (brightness feature)
+├── text.py              # Navigate (set the kiosk's URL)
+├── services.yaml        # kio.refresh, kio.navigate
 └── translations/
-    └── en.json          # Config flow labels and error strings
+    └── en.json          # Config flow + service labels
 ```
+
+Tests live alongside at `src/ha-integration/tests/` with `conftest.py`, `pytest.ini`,
+and `requirements_test.txt` one level up. See **Local testing** below.
 
 ---
 
@@ -37,11 +43,11 @@ task ha:deploy
 ```
 
 This:
-1. Creates `/config/custom_components/kio/` on the HA host if it doesn't exist
-2. Copies all files from `src/ha-integration/custom_components/kio/` via `scp`
+1. Strips local `__pycache__` so stale bytecode isn't shipped
+2. Wipes and recreates `/config/custom_components/kio/` on the HA host, then `scp`s the integration in — so files deleted locally (e.g. a dropped platform) are also gone on the host. HA OS has no `rsync`, so this is the portable way to get `--delete` semantics with plain `ssh`/`scp`.
 3. Runs `ha core restart` — required for any Python code changes to take effect
 
-> `scp` does not remove files that were deleted locally. If you remove a platform file, delete the stale copy on the HA host manually, or switch the copy step to `rsync --delete`.
+For a tight edit loop, `task ha:watch` re-runs `ha:deploy` on every save (requires [`watchexec`](https://github.com/watchexec/watchexec)). But prefer the **Local testing** loop below for most logic — it needs no HA host and no restart.
 
 ---
 
@@ -93,25 +99,51 @@ For **optional** fields with defaults, the existing entry continues to work and 
 
 ---
 
+## Local testing
+
+The fastest loop — no HA host, no restart. The suite uses
+`pytest-homeassistant-custom-component` (which pins a matching HA version and gives
+a real in-memory HA core) and `aioresponses` to stub the kio API.
+
+```bash
+task ha:test          # uv runs pytest with requirements_test.txt
+# or, from src/ha-integration/:
+uv run --with-requirements requirements_test.txt pytest -q
+```
+
+Tests cover config flow (`tests/test_config_flow.py`) and entity setup including
+dynamic feature-gated creation (`tests/test_init.py`). `tests/common.py::make_kiosk`
+builds a `/kiosks`-shaped fixture; override any field via kwargs. CI runs this on every
+change under `src/ha-integration/` (`.github/workflows/ha-integration.yaml`).
+
+Use this for entity/coordinator logic; fall back to `task ha:deploy` only to confirm
+the real environment (DNS, auth, an actual kiosk).
+
+---
+
 ## Adding a new entity
 
-1. Open or create the appropriate platform file (`sensor.py`, `binary_sensor.py`, etc.)
-2. Define a class inheriting from both `KioEntity` and the HA entity base (e.g. `SensorEntity`)
-3. Set `_attr_unique_id = f"{kiosk_id}_<descriptor>"` — must be stable across restarts
-4. If it's a new platform file, add the platform name to `PLATFORMS` in `const.py`
-5. Add the entity to the `async_setup_entry` list in that platform file
-6. `task ha:deploy` and verify under **Settings → Devices & Services → kio → your device**
+Each platform file uses the shared `setup_kio_platform(hass, entry, async_add_entities, factory)`
+helper from `entity.py`. You only write a `factory(coordinator, kiosk_id, added, first)`
+that returns the entities to create — the helper handles the initial pass, kiosks that
+appear later, and kiosks that gain features. `added` is the set of feature flags just
+gained; `first` is True the first time a kiosk is seen (use it for always-present entities).
+
+1. Open or create the platform file (`sensor.py`, `number.py`, etc.)
+2. Define a class inheriting from `KioEntity` and the HA base (e.g. `SensorEntity`)
+3. Set `_attr_unique_id = f"{kiosk_id}_<descriptor>"` — stable across restarts
+4. Add it to that file's `factory` (gate on `first` and/or `"<feature>" in added`)
+5. If it's a new platform file, add the platform name to `PLATFORMS` in `const.py`
+6. Add a test in `tests/` (assert the state appears), then `task ha:deploy` to confirm live
 
 ---
 
 ## Dynamic entity add/remove
 
-Currently entities are created once at startup. The planned improvement (see `PLAN.md`) will:
+Implemented via `setup_kio_platform` (see above):
 
-- **Add** entities when new kiosks appear in the coordinator data, or when an existing kiosk gains features (e.g. after Detect Capabilities runs)
-- **Remove** entities and their parent Device from the HA entity and device registries when a kiosk is deleted from kio
-
-Until that's implemented, adding or deleting kiosks requires reloading the integration (**Settings → Devices & Services → kio → ⋮ → Reload**) or running `task ha:deploy`.
+- **Added** when new kiosks appear in the coordinator data, or when an existing kiosk gains features (e.g. after Detect Capabilities runs).
+- **Removed** at the Device level: when a kiosk is deleted from kio, `__init__.py` removes its Device from the registry, which cascades to its entities. Individual entities are not torn down on feature *loss* — a stale entity just goes unavailable.
 
 ---
 
@@ -119,7 +151,9 @@ Until that's implemented, adding or deleting kiosks requires reloading the integ
 
 `KioCoordinator` extends `DataUpdateCoordinator`. On each update it calls `GET /kiosks` and stores the result as `{kiosk_id: kiosk_dict}`. All entities read from `coordinator.data[kiosk_id]` — no entity makes its own HTTP calls.
 
-Command methods (`send_command`, `navigate`, `set_input`) post to the kio API and then call `coordinator.async_request_refresh()` to pull updated state immediately.
+Command methods (`send_command`, `navigate`, `set_input`, `set_brightness`, `update_agent`) go through one private `_command(method, path, json)` helper that writes to the kio API and then calls `coordinator.async_request_refresh()` to pull updated state immediately. The coordinator reuses a single `aiohttp.ClientSession`, opened lazily and closed in `async_unload_entry`.
+
+`update_agent` is intentionally **not** in the API's `ALLOWED_COMMANDS`; it uses the dedicated `POST /kiosks/{id}/agent/update` so the server injects an API-compatible git ref.
 
 If `_async_update_data` raises `UpdateFailed`, HA marks all entities unavailable and retries on the next 30-second interval.
 
@@ -148,7 +182,9 @@ Navigate to these pages to verify integration state. All paths are relative to `
 
 | Task / command | What it does |
 |---|---|
-| `task ha:deploy` | Copy integration files to HA host and restart core |
+| `task ha:test` | Run the local pytest suite (no HA host needed) |
+| `task ha:deploy` | rsync integration files to HA host and restart core |
+| `task ha:watch` | Auto-deploy on file change (needs watchexec) |
 | `ssh home-assistant "ha core logs" \| grep -i kio` | Tail integration logs |
 | Settings → Devices & Services → kio → ⋮ → Reload | Reload without full restart (data only) |
 | Settings → Devices & Services → kio → Delete | Remove entry (required for breaking config flow changes) |

@@ -12,18 +12,32 @@ Each kiosk in kio becomes a single Device in HA. The entities created depend on 
 |---|---|---|
 | Online | Binary sensor | Connectivity class — true when `status == "online"` |
 | Current URL | Sensor | The URL currently displayed in Chromium |
+| Status | Sensor | Raw status string (online/offline/unknown) |
 | Last Seen | Sensor | Timestamp of the last heartbeat received |
-| Agent Version | Sensor | Disabled by default |
-| IP Address | Sensor | Disabled by default |
+| Uptime | Sensor | System uptime (diagnostic) |
+| Hostname | Sensor | Diagnostic, disabled by default |
+| Device Type | Sensor | Hardware model, diagnostic, disabled by default |
+| Agent Version | Sensor | Diagnostic, disabled by default |
+| IP Address | Sensor | Diagnostic, disabled by default |
+| Navigate | Text | Set the kiosk's URL (shows the current URL) |
 | Reload Page | Button | Refreshes the current browser tab |
 | Reboot | Button | Reboots the Pi |
 | Detect Capabilities | Button | Triggers a hardware capability scan |
+| Update Agent | Button | Pulls the latest API-compatible agent build and restarts |
 | Standby (CEC) | Button | Sends CEC standby signal — requires `cec` capability |
 | Wake (CEC) | Button | Sends CEC wake signal — requires `cec` capability |
 | Display Power | Switch | Turns the display on/off — requires `display_power` capability |
 | Display Input | Select | Switches between hdmi1/hdmi2/dp1/dp2 — requires `input_switch` capability |
+| Brightness | Number | Display luminance 0–100 — requires `brightness` capability |
 
-Feature-gated entities only appear after the kiosk agent reports that capability. If you expect a switch or select that isn't showing up, press **Detect Capabilities** on the kiosk in the kio dashboard and wait for the scan to complete.
+Feature-gated entities only appear after the kiosk agent reports that capability. If you expect a switch, select, or slider that isn't showing up, press **Detect Capabilities** on the kiosk in the kio dashboard and wait for the scan to complete.
+
+### Services
+
+| Service | Description |
+|---|---|
+| `kio.refresh` | Force an immediate poll of the kio API for all instances |
+| `kio.navigate` | Point one or more target kiosks at a URL (`url` field + a device/entity/area target) |
 
 Kiosks added to kio after the integration was loaded appear automatically within one poll cycle (30 seconds). Kiosks removed from kio are removed from HA within the same window.
 
@@ -72,14 +86,16 @@ automation:
       message: "Lobby Display has been offline for 2 minutes"
 ```
 
-**Navigate all kiosks to a dashboard URL on demand:**
+**Navigate a kiosk to a dashboard URL on demand:**
 ```yaml
 script:
   kiosks_show_dashboard:
     sequence:
-      - service: button.press
+      - service: kio.navigate
         target:
-          entity_id: button.lobby_display_reload_page
+          device_id: <lobby kiosk device id>
+        data:
+          url: "https://grafana.example.local/d/abc/overview?kiosk"
 ```
 
 **Wake displays at sunrise:**

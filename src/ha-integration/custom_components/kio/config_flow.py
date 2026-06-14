@@ -33,6 +33,25 @@ async def _validate(api_url: str, api_key: str, api_ip: str = "") -> None:
         raise HomeAssistantError("cannot_connect") from err
 
 
+def _schema(defaults: dict | None = None) -> vol.Schema:
+    """Build the connection form, pre-filling from `defaults` when reconfiguring."""
+    defaults = defaults or {}
+    return vol.Schema({
+        vol.Required(
+            CONF_API_URL,
+            description={"suggested_value": defaults.get(CONF_API_URL, "http://api.kio.example.local")},
+        ): str,
+        vol.Optional(
+            CONF_API_KEY,
+            description={"suggested_value": defaults.get(CONF_API_KEY, "")},
+        ): str,
+        vol.Optional(
+            CONF_API_IP,
+            description={"suggested_value": defaults.get(CONF_API_IP, "")},
+        ): str,
+    })
+
+
 class KioConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
@@ -53,12 +72,32 @@ class KioConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(title="kio", data=user_input)
 
+        return self.async_show_form(step_id="user", data_schema=_schema(), errors=errors)
+
+    async def async_step_reconfigure(self, user_input=None) -> ConfigFlowResult:
+        """Update an existing entry's connection settings (e.g. a rotated API key).
+
+        Lets you fix credentials without deleting and re-adding the integration.
+        """
+        entry = self._get_reconfigure_entry()
+        errors = {}
+
+        if user_input is not None:
+            try:
+                await _validate(
+                    user_input[CONF_API_URL],
+                    user_input.get(CONF_API_KEY, ""),
+                    user_input.get(CONF_API_IP, ""),
+                )
+            except HomeAssistantError as err:
+                errors["base"] = str(err)
+            else:
+                await self.async_set_unique_id(user_input[CONF_API_URL].rstrip("/"))
+                self._abort_if_unique_id_mismatch(reason="wrong_account")
+                return self.async_update_reload_and_abort(entry, data_updates=user_input)
+
         return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_API_URL, description={"suggested_value": "http://api.kio.example.local"}): str,
-                vol.Optional(CONF_API_KEY): str,
-                vol.Optional(CONF_API_IP, description={"suggested_value": ""}): str,
-            }),
+            step_id="reconfigure",
+            data_schema=_schema(user_input or entry.data),
             errors=errors,
         )

@@ -1,44 +1,36 @@
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EntityCategory, UnitOfTime
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util.dt import parse_datetime
 
-from .const import DOMAIN
 from .coordinator import KioCoordinator
-from .entity import KioEntity
+from .entity import KioEntity, setup_kio_platform
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    coordinator: KioCoordinator = hass.data[DOMAIN][entry.entry_id]
-    known: set[str] = set()
-
-    def _make_sensors(kiosk_id: str) -> list:
+    def factory(coordinator: KioCoordinator, kiosk_id: str, added: frozenset, first: bool) -> list:
+        if not first:
+            return []
         return [
             KioStatusSensor(coordinator, kiosk_id),
             KioUrlSensor(coordinator, kiosk_id),
             KioLastSeenSensor(coordinator, kiosk_id),
+            KioUptimeSensor(coordinator, kiosk_id),
+            KioHostnameSensor(coordinator, kiosk_id),
+            KioDeviceTypeSensor(coordinator, kiosk_id),
             KioAgentVersionSensor(coordinator, kiosk_id),
             KioIpAddressSensor(coordinator, kiosk_id),
         ]
 
-    new_entities = [s for kid in coordinator.data for s in _make_sensors(kid)]
-    known.update(coordinator.data)
-    async_add_entities(new_entities)
-
-    @callback
-    def _on_update() -> None:
-        current_ids = set(coordinator.data)
-        new_ids = current_ids - known
-        new_entities = [s for kid in new_ids for s in _make_sensors(kid)]
-        known.update(new_ids)
-        known.intersection_update(current_ids)
-        if new_entities:
-            async_add_entities(new_entities)
-
-    entry.async_on_unload(coordinator.async_add_listener(_on_update))
+    setup_kio_platform(hass, entry, async_add_entities, factory)
 
 
 class KioStatusSensor(KioEntity, SensorEntity):
@@ -82,9 +74,57 @@ class KioLastSeenSensor(KioEntity, SensorEntity):
         return parse_datetime(raw) if raw else None
 
 
+class KioUptimeSensor(KioEntity, SensorEntity):
+    _attr_name = "Uptime"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:timer-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: KioCoordinator, kiosk_id: str) -> None:
+        super().__init__(coordinator, kiosk_id)
+        self._attr_unique_id = f"{kiosk_id}_uptime"
+
+    @property
+    def native_value(self) -> int | None:
+        return self._kiosk.get("uptime_seconds")
+
+
+class KioHostnameSensor(KioEntity, SensorEntity):
+    _attr_name = "Hostname"
+    _attr_icon = "mdi:console-network"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: KioCoordinator, kiosk_id: str) -> None:
+        super().__init__(coordinator, kiosk_id)
+        self._attr_unique_id = f"{kiosk_id}_hostname"
+
+    @property
+    def native_value(self) -> str | None:
+        return self._kiosk.get("hostname")
+
+
+class KioDeviceTypeSensor(KioEntity, SensorEntity):
+    _attr_name = "Device Type"
+    _attr_icon = "mdi:raspberry-pi"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: KioCoordinator, kiosk_id: str) -> None:
+        super().__init__(coordinator, kiosk_id)
+        self._attr_unique_id = f"{kiosk_id}_device_type"
+
+    @property
+    def native_value(self) -> str | None:
+        return self._kiosk.get("device_type")
+
+
 class KioAgentVersionSensor(KioEntity, SensorEntity):
     _attr_name = "Agent Version"
     _attr_icon = "mdi:information-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: KioCoordinator, kiosk_id: str) -> None:
@@ -99,6 +139,7 @@ class KioAgentVersionSensor(KioEntity, SensorEntity):
 class KioIpAddressSensor(KioEntity, SensorEntity):
     _attr_name = "IP Address"
     _attr_icon = "mdi:ip-network"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: KioCoordinator, kiosk_id: str) -> None:

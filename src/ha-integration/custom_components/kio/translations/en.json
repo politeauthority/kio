@@ -13,6 +13,20 @@
           "api_key": "Optional API key (X-API-Key). Leave blank if auth is disabled.",
           "api_ip": "Optional. If HA cannot resolve the hostname (e.g. .int TLD DNS issue), enter the server IP here (e.g. 192.168.1.10)."
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure kio",
+        "description": "Update the connection settings for this kio instance, e.g. after rotating the API key.",
+        "data": {
+          "api_url": "API URL",
+          "api_key": "API Key",
+          "api_ip": "API IP Override"
+        },
+        "data_description": {
+          "api_url": "Base URL of your kio API, e.g. http://api.kio.example.local",
+          "api_key": "API key (X-API-Key). Leave blank if auth is disabled.",
+          "api_ip": "Optional. If HA cannot resolve the hostname, enter the server IP here."
+        }
       }
     },
     "error": {
@@ -20,7 +34,25 @@
       "invalid_auth": "API key was rejected (HTTP 401)."
     },
     "abort": {
-      "already_configured": "This kio instance is already configured."
+      "already_configured": "This kio instance is already configured.",
+      "reconfigure_successful": "kio connection settings updated.",
+      "wrong_account": "That API URL points at a different kio instance than this entry."
+    }
+  },
+  "services": {
+    "refresh": {
+      "name": "Refresh",
+      "description": "Force an immediate data refresh from the kio API for all configured instances."
+    },
+    "navigate": {
+      "name": "Navigate",
+      "description": "Point one or more kiosks at a URL.",
+      "fields": {
+        "url": {
+          "name": "URL",
+          "description": "The URL to load on the kiosk."
+        }
+      }
     }
   }
 }
