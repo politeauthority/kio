@@ -248,3 +248,68 @@ async def test_log_command_updates_pending_record(agent_client):
     assert pending.agent_message == "ok"
     assert pending.agent_at is not None
     session.add.assert_not_called()  # updated in place, not added
+
+
+# ---------------------------------------------------------------------------
+# POST /agent/hardware-detect-log — capability-override conflict alert
+# ---------------------------------------------------------------------------
+
+
+async def test_detect_log_conflicting_override_creates_system_event(agent_client):
+    from app.models.command_log import CommandLog
+
+    client, kiosk, session = agent_client
+    session.commit = AsyncMock()
+    # User force-enabled input_switch; the new probe says it's unsupported.
+    meta = MagicMock(value={"input_switch": True, "cec": False})
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = meta
+    session.execute = AsyncMock(return_value=result)
+    added = []
+    session.add = MagicMock(side_effect=added.append)
+
+    r = await client.post(
+        "/agent/hardware-detect-log",
+        json={
+            "capabilities": ["display_power"],
+            "probes": {
+                "input_switch": {"status": "unsupported"},
+                "display_power": {"status": "supported"},
+            },
+            "hardware_info": {},
+        },
+    )
+
+    assert r.status_code == 204
+    events = [o for o in added if isinstance(o, CommandLog)]
+    assert any(
+        e.command == "capability_conflict" and "input_switch" in (e.subject or "")
+        for e in events
+    ), "expected a capability_conflict system event for the broken override"
+
+
+async def test_detect_log_supported_override_no_event(agent_client):
+    from app.models.command_log import CommandLog
+
+    client, kiosk, session = agent_client
+    session.commit = AsyncMock()
+    # User enabled input_switch and detection now confirms it — no conflict.
+    meta = MagicMock(value={"input_switch": True})
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = meta
+    session.execute = AsyncMock(return_value=result)
+    added = []
+    session.add = MagicMock(side_effect=added.append)
+
+    r = await client.post(
+        "/agent/hardware-detect-log",
+        json={
+            "capabilities": ["input_switch"],
+            "probes": {"input_switch": {"status": "supported"}},
+            "hardware_info": {},
+        },
+    )
+
+    assert r.status_code == 204
+    events = [o for o in added if isinstance(o, CommandLog)]
+    assert not any(e.command == "capability_conflict" for e in events)
