@@ -4,39 +4,43 @@
       "user": {
         "title": "Connect to kio",
         "data": {
+          "environment": "Environment",
           "api_url": "API URL",
           "api_key": "API Key",
           "api_ip": "API IP Override"
         },
         "data_description": {
-          "api_url": "Base URL of your kio API, e.g. http://api.kio.example.local",
-          "api_key": "Optional API key (X-API-Key). Leave blank if auth is disabled.",
-          "api_ip": "Optional. If HA cannot resolve the hostname (e.g. .int TLD DNS issue), enter the server IP here (e.g. 192.168.1.10)."
+          "environment": "Pick prod or staging to fill the URL automatically, or 'custom' to enter your own.",
+          "api_url": "Only for 'custom' — base URL of your kio API, e.g. http://api.kio.example.local",
+          "api_key": "API key (X-API-Key) for the chosen environment. Leave blank if auth is disabled.",
+          "api_ip": "Only for 'custom'. If HA cannot resolve the hostname (.int TLD DNS issue), enter the server IP here."
         }
       },
       "reconfigure": {
         "title": "Reconfigure kio",
-        "description": "Update the connection settings for this kio instance, e.g. after rotating the API key.",
+        "description": "Switch which environment this integration mirrors (prod/staging), or update its API key. Switching environments changes which kiosks appear.",
         "data": {
+          "environment": "Environment",
           "api_url": "API URL",
           "api_key": "API Key",
           "api_ip": "API IP Override"
         },
         "data_description": {
-          "api_url": "Base URL of your kio API, e.g. http://api.kio.example.local",
-          "api_key": "API key (X-API-Key). Leave blank if auth is disabled.",
-          "api_ip": "Optional. If HA cannot resolve the hostname, enter the server IP here."
+          "environment": "Choose prod or staging to switch source of truth; 'custom' to enter your own URL.",
+          "api_url": "Only for 'custom' — base URL of your kio API.",
+          "api_key": "API key (X-API-Key) for the chosen environment. Leave blank if auth is disabled.",
+          "api_ip": "Only for 'custom'. If HA cannot resolve the hostname, enter the server IP here."
         }
       }
     },
     "error": {
       "cannot_connect": "Could not reach the kio API. Check the URL and network.",
-      "invalid_auth": "API key was rejected (HTTP 401)."
+      "invalid_auth": "API key was rejected (HTTP 401).",
+      "url_required": "Choose an environment, or enter an API URL for 'custom'."
     },
     "abort": {
-      "already_configured": "This kio instance is already configured.",
-      "reconfigure_successful": "kio connection settings updated.",
-      "wrong_account": "That API URL points at a different kio instance than this entry."
+      "already_configured": "This kio environment is already configured.",
+      "reconfigure_successful": "kio connection settings updated."
     }
   },
   "services": {

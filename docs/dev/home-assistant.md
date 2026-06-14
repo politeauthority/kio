@@ -78,12 +78,48 @@ After the first `task ha:deploy` and HA restart:
 
 1. **Settings → Devices & Services → Add Integration**
 2. Search for **kio**
-3. Enter:
-   - **API URL** — e.g. `http://api.kio.example.local`
-   - **API Key** — leave blank if auth is disabled
+3. Pick an **Environment**:
+   - **prod** / **staging** — auto-fills that environment's API URL and the shared
+     private-gateway IP override; you just enter that env's **API key**.
+   - **custom** — enter your own **API URL** (and an **API IP Override** if HA
+     can't resolve the hostname, e.g. the `.int` TLD).
 4. Submit — HA validates by calling `GET /kiosks`
 
 All registered kiosks appear as Devices immediately.
+
+---
+
+## Switching between prod and staging
+
+The integration can mirror either environment as its source of truth. The env
+preset lives in both the add and **Reconfigure** flows (`config_flow.py`,
+`ENV_PRESETS`): choosing `prod`/`staging` fills the URL + the shared gateway IP
+(`192.168.50.81` — both envs sit behind the same private nginx gateway with
+host-based routing), so switching is just a dropdown + that env's API key.
+
+**To flip in place:** **Settings → Devices & Services → kio → ⋮ → Reconfigure →
+Environment** → pick the other env → enter its API key → Submit. The entry
+re-points and reloads.
+
+> **Caveat — entity churn.** Switching environments changes which kiosks exist
+> (different kiosk UUIDs → different entity `unique_id`s). HA keeps the old env's
+> entities in the registry until they're purged, so the new env's entities land
+> with `_2` suffixes (`switch.office_display_power_2`, …) and the old ones linger
+> as `unavailable`. Fine for an occasional switch.
+
+**For a spotless switch (no `_2`):** delete → restart → re-add, so the old
+entities are purged before the new ones register:
+
+1. **Delete** the kio entry (Settings → Devices & Services → kio → ⋮ → Delete),
+   or `DELETE /api/config/config_entries/entry/{id}`.
+2. **`task ha:deploy`** (or any HA Core restart) — startup purges the orphaned
+   entities, freeing the base entity ids.
+3. **Re-add** via the env preset (Add Integration → kio → Environment).
+
+Notes:
+- The API key is stored **encrypted** in HA's config entry (`.storage`), per env.
+- Entry titles reflect the env (`kio (prod)` / `kio (staging)`), so a glance at
+  the integration card tells you which source is active.
 
 ---
 
