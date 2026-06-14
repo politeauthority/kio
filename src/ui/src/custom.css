@@ -382,6 +382,29 @@ code {
   container-type: inline-size;
 }
 
+/* Deployed-version footer — sits at the bottom of the content column (main-content
+   is flex:1, so this is pushed to the bottom on short pages) and lines up with the
+   content via the same max-width + horizontal padding. */
+.content-footer {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  max-width: 1100px;
+  padding: var(--space-md) var(--space-xl) var(--space-lg);
+  border-top: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.content-footer-brand {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.content-footer-version {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Cards ───────────────────────────────────── */
 
 .card {

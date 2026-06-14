@@ -80,6 +80,11 @@
       <main class="main-content">
         <RouterView />
       </main>
+
+      <footer class="content-footer">
+        <span class="content-footer-brand">kio</span>
+        <span class="content-footer-version">{{ version ? `v${version}` : '—' }}</span>
+      </footer>
     </div>
 
     <div class="toast-container">

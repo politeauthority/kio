@@ -58,17 +58,25 @@
               style="width: 15px; height: 15px; accent-color: var(--accent)"
             />
             <span class="text-sm">{{ cap.label }}</span>
+            <span class="text-xs" :style="{ color: capStatusColor(cap.key), fontWeight: 500 }">{{ capStatusLabel(cap.key) }}</span>
             <span class="text-xs text-muted">{{ cap.description }}</span>
           </label>
           <p
-            v-if="capUnsupported(cap.key)"
+            v-if="capStatus(cap.key) === 'unsupported'"
             class="text-xs"
             style="margin: 0.3rem 0 0 1.75rem; color: var(--warning)"
           >
             ⚠ Disabled — {{ capUnsupportedReason(cap.key) }}. Re-run “Detect Hardware” after changing the display.
           </p>
+          <p
+            v-else-if="capStatus(cap.key) === 'unknown'"
+            class="text-xs"
+            style="margin: 0.3rem 0 0 1.75rem; color: var(--warning)"
+          >
+            ⚠ Last detection couldn’t read this capability (transient i2c failure) — its previous state was kept. Re-run “Detect Hardware” to confirm.
+          </p>
           <label
-            v-else-if="featuresSet.has(cap.key)"
+            v-if="featuresSet.has(cap.key) && capStatus(cap.key) !== 'unsupported'"
             style="display: flex; align-items: center; gap: 0.65rem; cursor: pointer; margin-top: 0.35rem; margin-left: 1.75rem"
           >
             <input
@@ -392,9 +400,30 @@ const KNOWN_CAPS = [
 // be enabled, and explain why.
 const detectLog = ref(null)
 
-function capUnsupported(key) {
+// Per-capability support from the latest detect: 'supported' | 'unsupported' |
+// 'unknown' (probe couldn't communicate) | 'unprobed' (no detect log yet). Only a
+// definitive 'unsupported' disables the toggle — an 'unknown' is a transient probe
+// failure and must not be treated as "the display can't do this".
+function capStatus(key) {
   const probe = detectLog.value?.probes?.[key]
-  return !!probe && probe.detected === false
+  if (!probe) return 'unprobed'
+  if (probe.status) return probe.status
+  // Back-compat: detect logs written before tri-state status existed only had `detected`.
+  return probe.detected === false ? 'unsupported' : 'supported'
+}
+
+const CAP_STATUS_LABEL = { supported: 'Supported', unsupported: 'Not supported', unknown: 'Unknown', unprobed: 'Not probed' }
+const CAP_STATUS_COLOR = {
+  supported: 'var(--success, #3fb950)',
+  unsupported: 'var(--danger, #f85149)',
+  unknown: 'var(--warning, #d29922)',
+  unprobed: 'var(--text-muted)',
+}
+function capStatusLabel(key) { return CAP_STATUS_LABEL[capStatus(key)] }
+function capStatusColor(key) { return CAP_STATUS_COLOR[capStatus(key)] }
+
+function capUnsupported(key) {
+  return capStatus(key) === 'unsupported'
 }
 
 function capUnsupportedReason(key) {
@@ -504,6 +533,8 @@ const overrideFields = [
   { key: 'heartbeat_interval_seconds', label: 'Heartbeat interval', min: 5, max: 3600 },
   { key: 'heartbeat_jitter_seconds', label: 'Heartbeat jitter', min: 0, max: 300 },
   { key: 'metadata_interval_seconds', label: 'Metadata heartbeat interval', min: 60, max: 86400 },
+  { key: 'brightness_enabled', label: 'Brightness enabled (0 = off, 1 = on)', min: 0, max: 1 },
+  { key: 'brightness_default', label: 'Default brightness (%)', min: 0, max: 100 },
 ]
 const agentDefaults = ref({})
 const overrides = ref({})

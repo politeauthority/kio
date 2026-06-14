@@ -856,70 +856,100 @@ class TabCycler:
 # Command handler
 # ---------------------------------------------------------------------------
 
-def detect_capabilities() -> tuple[list[str], dict]:
-    """Probe hardware and return (capabilities, probes) where probes has per-check debug info."""
-    caps: list[str] = []
-    probes: dict = {}
+# DDC/CI-backed capabilities and the VCP code each is probed with.
+_KNOWN_VCP_CAPS = [
+    ("display_power", "D6"),  # power mode
+    ("input_switch", "60"),   # input source
+    ("brightness", "10"),     # luminance
+]
 
-    # display_power: ddcutil can read/write VCP D6 (display power mode)
-    try:
-        r = subprocess.run(["ddcutil", "getvcp", "D6"], capture_output=True, text=True, timeout=15)
-        detected = r.returncode == 0
-        probes["display_power"] = {
-            "cmd": "ddcutil getvcp D6",
-            "returncode": r.returncode,
-            "stdout": r.stdout.strip()[:1000],
-            "stderr": r.stderr.strip()[:500],
-            "detected": detected,
-        }
-        if detected:
-            caps.append("display_power")
-    except Exception as exc:
-        probes["display_power"] = {"cmd": "ddcutil getvcp D6", "error": str(exc), "detected": False}
 
-    # cec: /dev/cec0 exists, cec-ctl installed, and a display is on the bus
-    # (physical address f.f.f.f means no CEC-capable display is connected)
+def _classify_ddc_failure(stdout: str, stderr: str) -> str:
+    """Classify a non-zero `ddcutil getvcp`: a definitive 'unsupported' (the device
+    answered that the feature/display isn't there) vs an 'unknown' (i2c/comm error,
+    timeout — the result is undetermined). The distinction matters because an
+    'unknown' must never drop a capability the node already had (transient flakiness),
+    whereas 'unsupported' legitimately removes it."""
+    blob = (stdout + " " + stderr).lower()
+    if any(s in blob for s in ("not supported", "feature not found", "invalid vcp", "unsupported")):
+        return "unsupported"
+    return "unknown"
+
+
+def _probe_vcp(code: str, attempts: int = 3) -> tuple[str, dict]:
+    """Probe a ddcutil VCP code, retrying transient failures. Returns (status, info)
+    where status is 'supported' | 'unsupported' | 'unknown'. Retries exist because a
+    single i2c hiccup during a multi-probe detect would otherwise misreport a working
+    capability as absent."""
+    info: dict = {"cmd": f"ddcutil getvcp {code}"}
+    for attempt in range(1, attempts + 1):
+        try:
+            r = subprocess.run(["ddcutil", "getvcp", code], capture_output=True, text=True, timeout=15)
+            info = {"cmd": f"ddcutil getvcp {code}", "returncode": r.returncode,
+                    "stdout": r.stdout.strip()[:1000], "stderr": r.stderr.strip()[:500],
+                    "attempts": attempt}
+            if r.returncode == 0:
+                return "supported", info
+            if _classify_ddc_failure(r.stdout, r.stderr) == "unsupported":
+                return "unsupported", info
+            # otherwise an unknown/comm failure — retry
+        except Exception as exc:
+            info = {"cmd": f"ddcutil getvcp {code}", "error": str(exc), "attempts": attempt}
+        if attempt < attempts:
+            time.sleep(0.5)
+    return "unknown", info
+
+
+def _probe_cec(attempts: int = 3) -> tuple[str, dict]:
+    """Probe HDMI-CEC. 'supported' = adapter present and a CEC display is on the bus;
+    'unsupported' = no adapter, or the bus reports no display (physical addr f.f.f.f);
+    'unknown' = the cec-ctl call errored (retried)."""
     cec_cmd = ["sudo", "cec-ctl", "-d", "/dev/cec0", "--playback", "-S"]
-    if os.path.exists("/dev/cec0"):
+    if not os.path.exists("/dev/cec0"):
+        return "unsupported", {"cmd": " ".join(cec_cmd), "error": "/dev/cec0 not found"}
+    info: dict = {"cmd": " ".join(cec_cmd)}
+    for attempt in range(1, attempts + 1):
         try:
             r = subprocess.run(cec_cmd, capture_output=True, text=True, timeout=10)
             physical = next(
                 (l.split(":", 1)[1].strip() for l in r.stdout.splitlines() if "Physical Address" in l),
                 "unknown",
             )
-            detected = r.returncode == 0 and physical != "f.f.f.f"
-            probes["cec"] = {
-                "cmd": " ".join(cec_cmd),
-                "returncode": r.returncode,
-                "stdout": r.stdout.strip()[:1000],
-                "stderr": r.stderr.strip()[:500],
-                "physical_address": physical,
-                "detected": detected,
-            }
-            if detected:
-                caps.append("cec")
+            info = {"cmd": " ".join(cec_cmd), "returncode": r.returncode,
+                    "stdout": r.stdout.strip()[:1000], "stderr": r.stderr.strip()[:500],
+                    "physical_address": physical, "attempts": attempt}
+            if r.returncode == 0:
+                return ("supported" if physical != "f.f.f.f" else "unsupported"), info
         except Exception as exc:
-            probes["cec"] = {"cmd": " ".join(cec_cmd), "error": str(exc), "detected": False}
-    else:
-        probes["cec"] = {"cmd": " ".join(cec_cmd), "error": "/dev/cec0 not found", "detected": False}
+            info = {"cmd": " ".join(cec_cmd), "error": str(exc), "attempts": attempt}
+        if attempt < attempts:
+            time.sleep(0.5)
+    return "unknown", info
 
-    # input_switch: ddcutil can read VCP 60 (input source)
-    try:
-        r = subprocess.run(["ddcutil", "getvcp", "60"], capture_output=True, text=True, timeout=15)
-        detected = r.returncode == 0
-        probes["input_switch"] = {
-            "cmd": "ddcutil getvcp 60",
-            "returncode": r.returncode,
-            "stdout": r.stdout.strip()[:1000],
-            "stderr": r.stderr.strip()[:500],
-            "detected": detected,
-        }
-        if detected:
-            caps.append("input_switch")
-    except Exception as exc:
-        probes["input_switch"] = {"cmd": "ddcutil getvcp 60", "error": str(exc), "detected": False}
 
-    logger.info("Detected capabilities: %s", caps)
+def detect_capabilities() -> tuple[list[str], dict]:
+    """Probe hardware and return (capabilities, probes).
+
+    `capabilities` is the list of features probed as 'supported'. `probes` carries
+    per-capability debug info plus an explicit `status` (supported/unsupported/unknown)
+    and `detected` flag — surfaced in the dashboard so an operator can see what each
+    node supports, not just which features happen to be on. The non-destructive merge
+    against the unknown status lives in _run_capability_detection."""
+    caps: list[str] = []
+    probes: dict = {}
+
+    for cap, code in _KNOWN_VCP_CAPS:
+        status, info = _probe_vcp(code)
+        probes[cap] = {**info, "status": status, "detected": status == "supported"}
+        if status == "supported":
+            caps.append(cap)
+
+    cec_status, cec_info = _probe_cec()
+    probes["cec"] = {**cec_info, "status": cec_status, "detected": cec_status == "supported"}
+    if cec_status == "supported":
+        caps.append("cec")
+
+    logger.info("Detected capabilities: %s", {k: v["status"] for k, v in probes.items()})
     return caps, probes
 
 
@@ -1456,6 +1486,25 @@ def _set_display_power(on: bool) -> None:
         logger.warning("Display %s failed: wlopm, CEC, and ddcutil all failed", "on" if on else "off")
 
 
+def _set_brightness(value: int) -> bool:
+    """Set display luminance via DDC/CI VCP 10 (0–100). Returns True on success.
+
+    DDC/CI only — unlike power there is no CEC/wlopm fallback, because neither has
+    a luminance command. A node whose display lacks DDC/CI never advertises the
+    brightness capability, so this is reached only on capable hardware.
+    """
+    value = max(0, min(100, int(value)))
+    r = subprocess.run(
+        ["ddcutil", "setvcp", "10", str(value)],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode == 0:
+        logger.info("Brightness set to %d via ddcutil VCP 10", value)
+        return True
+    logger.warning("Brightness set failed (exit %d): %s", r.returncode, r.stderr.strip())
+    return False
+
+
 def _report_file_error(path: str, process: str = "agent") -> None:
     if not _agent:
         return
@@ -1862,6 +1911,21 @@ def handle_command(payload: bytes) -> None:
                 logger.warning("Unknown input: %s", input_name)
                 _report_command(f"set_input: {input_name}", False, "Unknown input", command_id=command_id)
                 return
+        elif command == "set_brightness":
+            # Gate check (defense in depth — the dashboard already hides the control
+            # when the feature is disabled for this node).
+            if not (_agent and _agent._brightness_enabled):
+                _report_command("set_brightness", False, "Brightness feature disabled for this node",
+                                command_id=command_id)
+                return
+            value = cmd.get("value")
+            if value is None:
+                _report_command("set_brightness", False, "Missing value", command_id=command_id)
+                return
+            if not _set_brightness(value):
+                _report_command("set_brightness", False, "ddcutil setvcp 10 failed", command_id=command_id)
+                return
+            _agent._current_brightness = max(0, min(100, int(value)))
         else:
             logger.warning("Unknown command: %s", command)
             _report_command(command or "unknown", False, "Unknown command", command_id=command_id)
@@ -1911,6 +1975,12 @@ class KioAgent:
         self._hb_jitter          = 0
         self._metadata_interval  = 3600
         self._settings_checkin   = 300
+        # Brightness feature gate + default luminance, delivered per node via
+        # GET /agent/settings and refreshed live on sync_settings/checkin. Seeded
+        # off so the feature stays dark until the gate is enabled for this node.
+        self._brightness_enabled = False
+        self._brightness_default = 80
+        self._current_brightness: int | None = None  # last value we applied
 
         env_tag = self.topic_prefix.replace("/", "-")
         self.client = mqtt.Client(
@@ -2280,6 +2350,16 @@ class KioAgent:
         except Exception:
             return None
 
+    def _effective_features(self) -> list[str]:
+        """Features to advertise to the dashboard: detected hardware capabilities,
+        minus any that are gated off. `brightness` hardware support is real but only
+        exposed while the brightness_enabled gate is on, so the dashboard slider
+        appears/disappears with the gate without any UI-side flag lookup."""
+        feats = self.features
+        if not self._brightness_enabled and "brightness" in feats:
+            feats = [f for f in feats if f != "brightness"]
+        return feats
+
     def _post_heartbeat(self, online: bool = True, include_metadata: bool = False,
                         include_features: bool = False) -> None:
         # Hardware state (ddcutil/CEC) is slow — only poll on the hourly metadata
@@ -2301,7 +2381,7 @@ class KioAgent:
         # reason to update them (explicit detect, or detected display drift), never
         # on routine heartbeats — otherwise they'd clobber dashboard edits hourly.
         if include_features:
-            payload["features"] = self.features
+            payload["features"] = self._effective_features()
         if include_metadata:
             payload["device_type"]    = self._get_device_type()
             payload["ip_address"]     = self._get_ip_address()
@@ -2358,6 +2438,16 @@ class KioAgent:
         features, and it also records the display fingerprint it detected against.
         """
         caps, probes = detect_capabilities()
+        # Non-destructive merge: a capability that probed "unknown" (transient i2c
+        # failure rather than a definitive "unsupported") must not be dropped if the
+        # node already had it. This stops a flaky detect from silently wiping a
+        # working feature (e.g. input_switch). Only a definitive "unsupported" removes.
+        prior = set(self.features)
+        merged = set(caps)
+        for cap, info in probes.items():
+            if info.get("status") == "unknown" and cap in prior:
+                merged.add(cap)
+        caps = sorted(merged)
         hw_info = collect_hardware_info()
         self.features = caps
         save_features(caps)
@@ -2442,6 +2532,25 @@ class KioAgent:
             "Applied settings from %s: heartbeat=%ds jitter=%ds metadata=%ds checkin=%ds",
             source, self._hb_interval, self._hb_jitter, self._metadata_interval, self._settings_checkin,
         )
+
+        # Brightness feature gate + default. Pulled here so a gate flip (global or
+        # per-node) reaches the node live via sync_settings, not just on reboot.
+        prev_enabled = self._brightness_enabled
+        prev_default = self._brightness_default
+        self._brightness_enabled = bool(int(s.get("brightness_enabled", 0)))
+        self._brightness_default = max(0, min(100, int(s.get("brightness_default", self._brightness_default))))
+        gate_changed = self._brightness_enabled != prev_enabled
+        if self._brightness_enabled and "brightness" in self.features:
+            # Apply the configured default when the gate turns on or the default
+            # itself changes — but NOT on every checkin, which would clobber a
+            # manual slider change between checkins.
+            if gate_changed or self._brightness_default != prev_default:
+                if _set_brightness(self._brightness_default):
+                    self._current_brightness = self._brightness_default
+        if gate_changed:
+            # Re-advertise features so the dashboard shows/hides the slider live
+            # (the effective feature list reflects the gate — see _effective_features).
+            self._post_heartbeat(include_features=True)
 
         res = s.get("display_resolution")
         if res and isinstance(res, dict) and res.get("output") and res.get("mode"):

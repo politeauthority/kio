@@ -505,6 +505,38 @@ async def set_input(
     await session.commit()
 
 
+class BrightnessPayload(BaseModel):
+    value: int = Field(ge=0, le=100)
+
+
+@router.put("/{kiosk_id}/brightness", status_code=204)
+async def set_brightness(
+    kiosk_id: uuid.UUID,
+    payload: BrightnessPayload,
+    session: AsyncSession = Depends(get_session),
+):
+    """Set display luminance (DDC/CI VCP 10) for a node.
+
+    The agent only acts on this if its brightness feature gate is enabled; the
+    value is persisted per node as NodeMeta("brightness") so the dashboard slider
+    reflects the last commanded level after a reload.
+    """
+    kiosk = await kiosk_service.get_by_id(session, kiosk_id)
+    if kiosk is None:
+        raise HTTPException(status_code=404, detail="Kiosk not found")
+    dispatch_command(session, kiosk_id, command="set_brightness", subject=str(payload.value),
+                     payload={"command": "set_brightness", "value": payload.value})
+    result = await session.execute(
+        select(NodeMeta).where(NodeMeta.kiosk_id == kiosk_id, NodeMeta.key == "brightness")
+    )
+    row = result.scalar_one_or_none()
+    if row:
+        row.value = payload.value
+    else:
+        session.add(NodeMeta(id=uuid.uuid4(), kiosk_id=kiosk_id, key="brightness", value=payload.value))
+    await session.commit()
+
+
 class SetResolutionPayload(BaseModel):
     output: str
     mode: str

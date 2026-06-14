@@ -2,6 +2,13 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: kio-migrate
+  annotations:
+    # Run `alembic upgrade head` before each ArgoCD sync rolls the API/UI, so the DB
+    # schema is current before the new code serves. BeforeHookCreation deletes the prior
+    # (immutable) Job so a new image can re-run it each sync. Under plain `kubectl apply`
+    # (dev), these annotations are ignored and it behaves as an ordinary Job.
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   ttlSecondsAfterFinished: 300
   backoffLimit: 2
