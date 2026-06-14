@@ -69,7 +69,11 @@ tasks:
       # Staging uses the `test` target so the deployed image carries pytest + the
       # test suite (run them in-cluster with `kubectl exec`). Production uses
       # `--target production`, which excludes tests and dev tooling.
-      - docker buildx build --platform linux/amd64 --target test --build-arg VERSION={{.BRANCH}}+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.TAG}} -t {{.IMAGE}}:{{.TAG}}-build.{{.BUILD}} .
+      # --load exports the image to the local docker store so the separate
+      # push-stg step (docker push) finds it. Required with the docker-container
+      # buildx driver (which keeps results in the build cache otherwise); a no-op
+      # with the plain `docker` driver used in CI.
+      - docker buildx build --platform linux/amd64 --target test --build-arg VERSION={{.BRANCH}}+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.TAG}} -t {{.IMAGE}}:{{.TAG}}-build.{{.BUILD}} --load .
 
   build-ui-dev:
     desc: Build the kio-ui image tagged dev-latest (linux/amd64)
@@ -93,7 +97,9 @@ tasks:
       BUILD:
         sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 --build-arg KIO_BRANCH={{.BRANCH}} -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.TAG}} -t {{.IMAGE_UI}}:{{.TAG}}-build.{{.BUILD}} .
+      # --load so the separate push-ui-stg step finds the image locally (see
+      # build-stg). Required for the docker-container buildx driver; no-op in CI.
+      - docker buildx build --platform linux/amd64 --build-arg KIO_BRANCH={{.BRANCH}} -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.TAG}} -t {{.IMAGE_UI}}:{{.TAG}}-build.{{.BUILD}} --load .
 
   test:e2e:
     desc: "Run all e2e tests (API + UI) — set KIO_API_URL, KIO_UI_URL, KIO_USERNAME, KIO_PASSWORD"
