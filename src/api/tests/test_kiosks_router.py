@@ -192,6 +192,32 @@ async def test_all_allowed_commands_accepted(client):
         assert r.status_code == 204, f"command {cmd!r} should be allowed"
 
 
+async def test_display_power_commands_record_believed_state(client):
+    # Power commands optimistically set display_on so clients (HA/dashboard)
+    # reflect the new state immediately, before the node's next heartbeat.
+    for cmd, expected in [("display_off", False), ("display_on", True),
+                          ("standby", False), ("wake", True)]:
+        kiosk = make_kiosk(display_on=not expected)
+        with (
+            patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=kiosk),
+            patch("app.routers.kiosks.publish_command"),
+        ):
+            r = await client.post(f"/kiosks/{kiosk.id}/command", json={"command": cmd})
+        assert r.status_code == 204
+        assert kiosk.display_on is expected, f"{cmd!r} should set display_on={expected}"
+
+
+async def test_non_power_command_leaves_display_state_untouched(client):
+    kiosk = make_kiosk(display_on=True)
+    with (
+        patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=kiosk),
+        patch("app.routers.kiosks.publish_command"),
+    ):
+        r = await client.post(f"/kiosks/{kiosk.id}/command", json={"command": "reload"})
+    assert r.status_code == 204
+    assert kiosk.display_on is True
+
+
 # ---------------------------------------------------------------------------
 # POST /kiosks/{id}/navigate
 # ---------------------------------------------------------------------------

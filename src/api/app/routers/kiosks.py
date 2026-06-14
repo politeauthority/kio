@@ -167,6 +167,17 @@ ALLOWED_INPUTS = {"dp1", "dp2", "hdmi1", "hdmi2"}
 # still receives the bare command (e.g. "reboot"); the log records the request.
 COMMAND_EVENT_LABELS = {"reboot": "reboot_requested"}
 
+# Commands that change display power. We optimistically record the believed power
+# state on the kiosk so clients (HA, the dashboard) reflect it immediately, rather
+# than snapping back to the stale value until the node's next heartbeat re-reads
+# and confirms it. Mirrors how /brightness persists the commanded level.
+DISPLAY_POWER_STATE = {
+    "display_on": True,
+    "display_off": False,
+    "wake": True,      # CEC one-touch-play
+    "standby": False,  # CEC standby
+}
+
 
 class CommandPayload(BaseModel):
     command: str
@@ -185,6 +196,8 @@ async def send_command(
         raise HTTPException(status_code=404, detail="Kiosk not found")
     event_label = COMMAND_EVENT_LABELS.get(payload.command, payload.command)
     dispatch_command(session, kiosk_id, command=event_label, payload={"command": payload.command})
+    if payload.command in DISPLAY_POWER_STATE:
+        kiosk.display_on = DISPLAY_POWER_STATE[payload.command]
     await session.commit()
 
 
