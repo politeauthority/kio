@@ -2279,38 +2279,55 @@ class KioAgent:
         return None
 
     def _get_display_on(self) -> bool | None:
-        """Read display power state. Tries CEC → DDC → Wayland in order.
+        """Read display power state from the most reliable source for the hardware.
 
-        CEC is checked first because it reflects the TV's actual power state —
-        wlopm only reports whether the compositor output is active (which is
-        always True while labwc is running, even when the TV is off via CEC).
+        Order matters and was the source of a real bug: querying CEC first broke
+        DDC/CI monitors (e.g. Dell S2721QS) that have no CEC TV to answer — the
+        give-device-power-status query to a non-existent TV returned a value that
+        parsed as "off" while the panel was on. So:
+
+          1. DDC/CI VCP D6 — the monitor's own power register, authoritative when
+             present (sl=0x01 on; 0x04/0x05 DPMS standby/off). Most kio nodes
+             drive a DDC monitor, and a real TV simply doesn't answer DDC, so this
+             only "wins" when it's the right source.
+          2. CEC give-device-power-status — for HDMI-CEC *TVs* without DDC. Only
+             trusted on a genuine reply (returncode 0 *and* a pwr-state line); a
+             monitor with no CEC TV NAKs the query, which must NOT read as "off".
+          3. wlopm — compositor output only (always "on" under labwc), last resort.
         """
-        # CEC: gives the TV's real power state, not just signal presence.
+        import re
+        # 1. DDC/CI power mode (D6). Authoritative for DDC monitors.
+        try:
+            r = subprocess.run(
+                ["ddcutil", "getvcp", "D6"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0:
+                m = re.search(r'sl=0x([0-9a-fA-F]+)', r.stdout)
+                if m:
+                    return int(m.group(1), 16) == 1
+        except Exception as exc:
+            logger.debug("ddcutil getvcp D6 failed: %s", exc)
+        # 2. CEC — only a real TV reply counts (guard returncode; ignore NAKs).
         if os.path.exists("/dev/cec0"):
             try:
                 r = subprocess.run(
                     ["sudo", "cec-ctl", "-d", "/dev/cec0", "--playback", "-t", "0", "--give-device-power-status"],
                     capture_output=True, text=True, timeout=10,
                 )
-                for line in r.stdout.splitlines():
-                    if "pwr-state" in line.lower():
-                        return "on" in line.lower()
+                if r.returncode == 0:
+                    for line in r.stdout.splitlines():
+                        low = line.lower()
+                        if "pwr-state" not in low:
+                            continue
+                        # e.g. "pwr-state: on" / "standby" / "in transition standby to on"
+                        if "to on" in low or ": on" in low:
+                            return True
+                        if "standby" in low:
+                            return False
             except Exception as exc:
                 logger.debug("cec power status failed: %s", exc)
-        # DDC: works for monitors that support VCP D6 while awake.
-        try:
-            import re
-            result = subprocess.run(
-                ["ddcutil", "getvcp", "D6"],
-                capture_output=True, text=True, timeout=10,
-            )
-            m = re.search(r'sl=0x([0-9a-fA-F]+)', result.stdout)
-            if m:
-                return int(m.group(1), 16) == 1
-        except Exception as exc:
-            logger.debug("ddcutil getvcp D6 failed: %s", exc)
-        # Wayland: reflects compositor output state, not physical display power.
-        # Useful for monitors without DDC/CEC, but always True on running labwc.
+        # 3. Wayland compositor output: always True on running labwc; last resort.
         env = _wayland_env()
         if env and os.path.exists("/usr/bin/wlopm"):
             try:

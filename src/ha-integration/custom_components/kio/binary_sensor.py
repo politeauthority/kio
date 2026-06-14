@@ -1,52 +1,24 @@
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
 from .coordinator import KioCoordinator
-from .entity import KioEntity
+from .entity import KioEntity, setup_kio_platform
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    coordinator: KioCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-    # known tracks kiosk_id -> frozenset of features we've already created entities for.
-    known: dict[str, frozenset] = {}
-
-    def _make_entities(kiosk_id: str, features: frozenset, prev_features: frozenset) -> list:
+    def factory(coordinator: KioCoordinator, kiosk_id: str, added: frozenset, first: bool) -> list:
         entities = []
-        if kiosk_id not in known:
+        if first:
             entities.append(KioOnlineSensor(coordinator, kiosk_id))
-        if "display_power" in (features - prev_features):
+        if "display_power" in added:
             entities.append(KioDisplayOnSensor(coordinator, kiosk_id))
         return entities
 
-    new_entities = []
-    for kiosk_id, kiosk in coordinator.data.items():
-        features = frozenset(kiosk.get("features", []))
-        new_entities.extend(_make_entities(kiosk_id, features, frozenset()))
-        known[kiosk_id] = features
-    async_add_entities(new_entities)
-
-    @callback
-    def _on_update() -> None:
-        current_ids = set(coordinator.data)
-        new_entities = []
-        for kiosk_id, kiosk in coordinator.data.items():
-            features = frozenset(kiosk.get("features", []))
-            prev = known.get(kiosk_id, frozenset())
-            if kiosk_id not in known or features != prev:
-                new_entities.extend(_make_entities(kiosk_id, features, prev))
-                known[kiosk_id] = features
-        for gone in set(known) - current_ids:
-            known.pop(gone)
-        if new_entities:
-            async_add_entities(new_entities)
-
-    entry.async_on_unload(coordinator.async_add_listener(_on_update))
+    setup_kio_platform(hass, entry, async_add_entities, factory)
 
 
 class KioOnlineSensor(KioEntity, BinarySensorEntity):

@@ -252,6 +252,39 @@ async def post_hardware_detect_log(
             hardware_info=payload.hardware_info,
         )
     )
+
+    # Alert when this detection conflicts with the user's saved capability
+    # overrides: a capability the user force-enabled is now probed as definitively
+    # "unsupported", so the control they enabled will silently not work. The
+    # override is still honored (we never auto-discard user intent) — we just
+    # surface the conflict as a system event so it's not lost.
+    meta_result = await session.execute(
+        select(NodeMeta).where(NodeMeta.kiosk_id == kiosk.id, NodeMeta.key == "features_overrides")
+    )
+    meta_row = meta_result.scalar_one_or_none()
+    overrides: dict = meta_row.value if meta_row else {}
+    probes = payload.probes or {}
+    broken = sorted(
+        cap for cap, enabled in overrides.items()
+        if enabled and probes.get(cap, {}).get("status") == "unsupported"
+    )
+    if broken:
+        session.add(
+            CommandLog(
+                id=uuid.uuid4(),
+                kiosk_id=kiosk.id,
+                command="capability_conflict",
+                subject=", ".join(broken),
+                source="system",
+                agent_success=False,
+                agent_message=(
+                    "Hardware detection reports these user-enabled capabilities as "
+                    f"unsupported: {', '.join(broken)}. The controls may not work."
+                ),
+                agent_at=datetime.now(timezone.utc),
+            )
+        )
+
     await session.commit()
 
 

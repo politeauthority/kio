@@ -57,10 +57,11 @@ async def _store_features_overrides(
         .limit(1)
     )
     log = log_result.scalar_one_or_none()
-    if log is None:
-        return  # no detect log yet — nothing to diff against
-
-    detected = set(log.capabilities or [])
+    # No detect log yet: treat detection as having found nothing, so every
+    # user-selected capability becomes an explicit enable override. Without this,
+    # capability choices made before a node's first hardware detection were never
+    # recorded and got silently dropped by the next heartbeat's features merge.
+    detected = set(log.capabilities or []) if log else set()
     user = set(user_features or [])
     overrides: dict = {}
     overrides.update({cap: True for cap in user - detected})

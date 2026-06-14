@@ -282,3 +282,24 @@ async def test_update_kiosk_from_heartbeat_updates_fields():
     assert kiosk.current_url == "https://example.com"
     assert kiosk.last_seen is not None
     session.commit.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# _store_features_overrides
+# ---------------------------------------------------------------------------
+
+
+async def test_store_features_overrides_without_detect_log_records_enables():
+    """A capability choice made before the node's first detect log must still be
+    persisted as an enable override (previously it was silently dropped)."""
+    session = _mock_session()  # execute → scalar_one_or_none None (no log, no meta)
+    captured = []
+    session.add = MagicMock(side_effect=captured.append)
+
+    from app.models.node_meta import NodeMeta
+
+    await kiosk_service._store_features_overrides(session, uuid.uuid4(), ["brightness", "cec"])
+
+    metas = [o for o in captured if isinstance(o, NodeMeta) and o.key == "features_overrides"]
+    assert metas, "expected a features_overrides NodeMeta to be created with no detect log"
+    assert metas[0].value == {"brightness": True, "cec": True}

@@ -45,6 +45,17 @@
       <p class="text-xs text-muted" style="margin-top: 0.5rem; margin-bottom: 0.75rem">
         Run detection when the display changes or when onboarding a new node. Results come back within ~15s.
       </p>
+      <div
+        v-if="conflictingCaps.length"
+        class="text-sm"
+        style="margin-bottom: 0.85rem; padding: 0.6rem 0.75rem; border: 1px solid var(--danger, #f85149); border-radius: 6px; color: var(--warning)"
+      >
+        ⚠ {{ conflictingCaps.length }} enabled
+        {{ conflictingCaps.length === 1 ? 'capability is' : 'capabilities are' }}
+        reported <strong>unsupported</strong> by the latest hardware detection and may not work:
+        {{ conflictingCaps.map((c) => c.label).join(', ') }}.
+        Your selection was kept — re-run “Detect Hardware” after fixing the display, or untick to clear.
+      </div>
       <div style="display: flex; flex-direction: column; gap: 0.85rem">
         <div v-for="cap in KNOWN_CAPS" :key="cap.key">
           <label
@@ -458,6 +469,13 @@ function toggleControl(key) {
 
 const featuresSet = ref(new Set())
 const detecting = ref(false)
+
+// Capabilities the user has enabled that the latest hardware detection reports as
+// definitively unsupported — the choice is honored server-side, but the control
+// likely won't work, so we surface a banner (and the API logs a system event).
+const conflictingCaps = computed(() =>
+  KNOWN_CAPS.filter((cap) => featuresSet.value.has(cap.key) && capStatus(cap.key) === 'unsupported')
+)
 
 // Resolution: map of output name -> selected mode string "WxH@R" or "WxH"
 const selectedResolutions = ref({})

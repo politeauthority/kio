@@ -69,7 +69,11 @@ tasks:
       # Staging uses the `test` target so the deployed image carries pytest + the
       # test suite (run them in-cluster with `kubectl exec`). Production uses
       # `--target production`, which excludes tests and dev tooling.
-      - docker buildx build --platform linux/amd64 --target test --build-arg VERSION={{.BRANCH}}+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.TAG}} -t {{.IMAGE}}:{{.TAG}}-build.{{.BUILD}} .
+      # --load exports the image to the local docker store so the separate
+      # push-stg step (docker push) finds it. Required with the docker-container
+      # buildx driver (which keeps results in the build cache otherwise); a no-op
+      # with the plain `docker` driver used in CI.
+      - docker buildx build --platform linux/amd64 --target test --build-arg VERSION={{.BRANCH}}+build.{{.BUILD}} -f docker/Dockerfile.api -t {{.IMAGE}}:{{.TAG}} -t {{.IMAGE}}:{{.TAG}}-build.{{.BUILD}} --load .
 
   build-ui-dev:
     desc: Build the kio-ui image tagged dev-latest (linux/amd64)
@@ -93,7 +97,9 @@ tasks:
       BUILD:
         sh: cat BUILD
     cmds:
-      - docker buildx build --platform linux/amd64 --build-arg KIO_BRANCH={{.BRANCH}} -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.TAG}} -t {{.IMAGE_UI}}:{{.TAG}}-build.{{.BUILD}} .
+      # --load so the separate push-ui-stg step finds the image locally (see
+      # build-stg). Required for the docker-container buildx driver; no-op in CI.
+      - docker buildx build --platform linux/amd64 --build-arg KIO_BRANCH={{.BRANCH}} -f docker/Dockerfile.ui -t {{.IMAGE_UI}}:{{.TAG}} -t {{.IMAGE_UI}}:{{.TAG}}-build.{{.BUILD}} --load .
 
   test:e2e:
     desc: "Run all e2e tests (API + UI) — set KIO_API_URL, KIO_UI_URL, KIO_USERNAME, KIO_PASSWORD"
@@ -212,10 +218,26 @@ tasks:
   ha:deploy:
     desc: Deploy the kio Home Assistant integration and restart HA core
     cmds:
-      - ssh home-assistant "mkdir -p /config/custom_components/kio"
+      # Drop local bytecode so scp doesn't ship __pycache__ to the host.
+      - find src/ha-integration/custom_components/kio -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+      # Wipe + recreate the remote dir so files removed locally (e.g. a dropped
+      # platform) are also gone on the host. HA OS has no rsync, so this is the
+      # portable way to get --delete semantics with plain ssh/scp.
+      - ssh home-assistant "rm -rf /config/custom_components/kio && mkdir -p /config/custom_components/kio"
       - scp -r src/ha-integration/custom_components/kio/. home-assistant:/config/custom_components/kio/
       - ssh home-assistant "ha core restart"
       - echo "Deployed kio integration to Home Assistant"
+
+  ha:test:
+    desc: Run the HA integration test suite locally (no deploy)
+    dir: src/ha-integration
+    cmds:
+      - uv run --with-requirements requirements_test.txt pytest -q
+
+  ha:watch:
+    desc: Auto-deploy the HA integration whenever a source file changes (needs watchexec)
+    cmds:
+      - watchexec -w src/ha-integration/custom_components/kio -e py,json,yaml --debounce 500ms -- task ha:deploy
 
   kio-1:deploy:
     desc: Deploy pi-agent to kio-1 and restart the agent service

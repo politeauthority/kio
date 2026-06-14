@@ -1,3 +1,18 @@
 refresh:
   name: Refresh
   description: Force an immediate data refresh from the kio API for all configured instances.
+
+navigate:
+  name: Navigate
+  description: Point one or more kiosks at a URL.
+  target:
+    device:
+      integration: kio
+  fields:
+    url:
+      name: URL
+      description: The URL to load on the kiosk.
+      required: true
+      example: https://example.com/dashboard
+      selector:
+        text:
