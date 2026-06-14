@@ -54,7 +54,10 @@ async def create_api_key(body: ApiKeyCreate, session: AsyncSession = Depends(get
     session.add(obj)
     await session.commit()
     await session.refresh(obj)
-    return ApiKeyCreated.model_validate(obj).model_copy(update={"key": key})
+    # Validate the persisted row against the base schema (which has no `key`),
+    # then attach the plaintext key — it exists only here, never on the ORM row,
+    # so validating ApiKeyCreated directly against `obj` would fail on `key`.
+    return ApiKeyCreated(**ApiKeyRead.model_validate(obj).model_dump(), key=key)
 
 
 @router.patch("/{key_id}", response_model=ApiKeyRead)
