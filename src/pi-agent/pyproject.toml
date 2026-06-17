@@ -12,7 +12,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
     "black>=24.0",
     "ruff>=0.4.4",
 ]
@@ -24,9 +23,8 @@ include = ["kio_agent*"]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
+# Unit tests live at tests/pi-agent/ (a self-contained project, mirroring
+# tests/e2e/). Run them with: cd tests/pi-agent && uv run pytest
 
 [tool.black]
 line-length = 120

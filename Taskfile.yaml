@@ -173,6 +173,12 @@ tasks:
     cmds:
       - uv run pytest {{.CLI_ARGS}}
 
+  test:pi-agent:
+    desc: Run pi-agent unit tests
+    dir: tests/pi-agent
+    cmds:
+      - uv run pytest {{.CLI_ARGS}}
+
   build-test:api:
     desc: Build the kio-api test image (runtime + dev deps + tests)
     cmds:
