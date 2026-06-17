@@ -1,0 +1,62 @@
+# Private Traefik routes (replaces the NGF HTTPRoutes). Served by traefik-private
+# via the websecure-private entrypoint. Namespace is injected by kustomize.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: private-tls
+  labels:
+    app.kubernetes.io/instance: kio
+spec:
+  secretName: private-tls
+  issuerRef:
+    name: private-ca
+    kind: ClusterIssuer
+  dnsNames:
+    - stg.kio.colfax.int
+    - api.stg.kio.colfax.int
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kio-ui
+  labels:
+    app.kubernetes.io/instance: kio
+spec:
+  entryPoints:
+    - websecure-private
+  routes:
+    - match: Host(`stg.kio.colfax.int`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik-private
+        - name: secure-headers
+          namespace: traefik-private
+      services:
+        - name: kio-ui
+          port: 80
+  tls:
+    secretName: private-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kio-api
+  labels:
+    app.kubernetes.io/instance: kio
+spec:
+  entryPoints:
+    - websecure-private
+  routes:
+    - match: Host(`api.stg.kio.colfax.int`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik-private
+        - name: secure-headers
+          namespace: traefik-private
+      services:
+        - name: kio-api
+          port: 8000
+  tls:
+    secretName: private-tls

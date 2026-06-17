@@ -5,8 +5,10 @@
 CERT_SOURCE="/etc/kio/certs"
 CERT_DEST="/usr/local/share/ca-certificates"
 
-# Remove all previously managed certs
-rm -f "$CERT_DEST"/kio_*.crt
+# Remove all previously managed certs. kio is the sole writer of this directory on
+# appliance kiosks, so wipe every .crt to keep the trust store declarative — this also
+# clears certs orphaned by older agents that wrote names without the kio_ prefix.
+rm -f "$CERT_DEST"/*.crt
 
 # Copy current certs from kio cert dir
 if [ -d "$CERT_SOURCE" ] && [ "$(ls -A "$CERT_SOURCE" 2>/dev/null)" ]; then
