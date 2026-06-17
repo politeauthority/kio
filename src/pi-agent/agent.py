@@ -266,7 +266,11 @@ def resolve_kiosk_id(cfg: dict) -> str:
             r = requests.get(
                 f"{cfg['api_url']}/agent/config",
                 headers={"Authorization": f"Bearer {cfg['api_token']}"},
-                timeout=10, verify=cfg["tls_verify"],
+                # Use the resolved TLS_VERIFY (system CA bundle) like every other
+                # request — NOT the raw cfg["tls_verify"]. The raw value is True by
+                # default, which makes requests fall back to certifi's bundle, and
+                # certifi never sees the internal CA that update-ca-certificates adds.
+                timeout=10, verify=TLS_VERIFY,
             )
             if r.status_code == 200:
                 data = r.json()
