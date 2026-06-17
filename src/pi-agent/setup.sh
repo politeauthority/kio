@@ -740,6 +740,12 @@ sudo mkdir -p "$INSTALL_DIR"
 # then do all file ops AS THE KIOSK USER so nothing ends up owned by root.
 fix_owner "$INSTALL_DIR"
 run_as_user cp "$SCRIPT_DIR/agent.py" "$SCRIPT_DIR/requirements.txt" "$SCRIPT_DIR/scripts/update-hosts" "$SCRIPT_DIR/scripts/update-certs" "$SCRIPT_DIR/scripts/browser-start" "$SCRIPT_DIR/scripts/force-hdmi" "$SCRIPT_DIR/scripts/set-resolution" "$SCRIPT_DIR/scripts/self-update" "$INSTALL_DIR/"
+# agent.py is a thin shim; the agent logic lives in the kio_agent package next to
+# it. Wipe any prior copy first so renamed/removed modules don't linger and get
+# imported in place of the new ones, then drop any shipped bytecode.
+run_as_user rm -rf "$INSTALL_DIR/kio_agent"
+run_as_user cp -r "$SCRIPT_DIR/kio_agent" "$INSTALL_DIR/kio_agent"
+run_as_user rm -rf "$INSTALL_DIR/kio_agent/__pycache__"
 run_as_user chmod +x "$INSTALL_DIR/update-hosts" "$INSTALL_DIR/update-certs" "$INSTALL_DIR/browser-start" "$INSTALL_DIR/force-hdmi" "$INSTALL_DIR/set-resolution" "$INSTALL_DIR/self-update"
 # VERSION lives next to setup.sh on a manual deploy, but at the repo root on the
 # git-bootstrap (self-update) path — copy from wherever it is, else the node keeps

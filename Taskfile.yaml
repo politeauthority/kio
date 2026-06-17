@@ -251,7 +251,7 @@ tasks:
     cmds:
       - ssh kio-1 "mkdir -p {{.KIO_DIR}}/pi-agent"
       - scp -r src/pi-agent/. kio-1:{{.KIO_DIR}}/pi-agent && scp VERSION kio-1:{{.KIO_DIR}}/pi-agent/VERSION
-      - ssh kio-1 "cp {{.KIO_DIR}}/pi-agent/agent.py {{.KIO_DIR}}/pi-agent/VERSION {{.KIO_DIR}}/pi-agent/requirements.txt /opt/kio-agent/"
+      - ssh kio-1 "cp {{.KIO_DIR}}/pi-agent/agent.py {{.KIO_DIR}}/pi-agent/VERSION {{.KIO_DIR}}/pi-agent/requirements.txt /opt/kio-agent/ && rm -rf /opt/kio-agent/kio_agent && cp -r {{.KIO_DIR}}/pi-agent/kio_agent /opt/kio-agent/ && rm -rf /opt/kio-agent/kio_agent/__pycache__"
       - ssh kio-1 "/opt/kio-agent/venv/bin/pip install -q -r /opt/kio-agent/requirements.txt"
       - ssh kio-1 "printf 'pkill wf-panel-pi\nunclutter-xfixes --timeout 1 &\n/opt/kio-agent/browser-start\n' > /home/pi/.config/labwc/autostart && chmod +x /home/pi/.config/labwc/autostart"
       - ssh kio-1 "sudo systemctl restart kio-agent"
@@ -322,6 +322,11 @@ tasks:
     cmds:
       - scp src/pi-agent/agent.py src/pi-agent/requirements.txt {{.HOST}}:/opt/kio-agent/
       - scp -r src/pi-agent/scripts/. {{.HOST}}:/opt/kio-agent/
+      # agent.py is a shim; sync the kio_agent package too, wiping the old copy
+      # first so renamed/removed modules don't linger on the node.
+      - ssh {{.HOST}} "rm -rf /opt/kio-agent/kio_agent"
+      - scp -r src/pi-agent/kio_agent {{.HOST}}:/opt/kio-agent/
+      - ssh {{.HOST}} "rm -rf /opt/kio-agent/kio_agent/__pycache__"
       - scp {{.CONFIG}} {{.HOST}}:/etc/kio/kiosk.yaml
       - ssh {{.HOST}} "sudo systemctl restart kio-agent"
       - echo "{{.HOST}} -> synced agent + {{.CONFIG}}"
