@@ -22,6 +22,10 @@ permissions:
 jobs:
   test-build:
     runs-on: kio
+    env:
+      # Registry/org for image build+push (Taskfile defaults to a placeholder
+      # and otherwise reads a local .env that does not exist in CI).
+      HARBOR: harbor.squid-ink.us/politeauthority
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       namespace: ${{ steps.meta.outputs.namespace }}

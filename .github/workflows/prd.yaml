@@ -25,6 +25,10 @@ permissions:
 jobs:
   release:
     runs-on: kio
+    env:
+      # Registry/org for image build+push (Taskfile defaults to a placeholder
+      # and otherwise reads a local .env that does not exist in CI).
+      HARBOR: harbor.squid-ink.us/politeauthority
     steps:
       - uses: actions/checkout@v4
         with:
