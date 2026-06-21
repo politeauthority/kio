@@ -3,12 +3,12 @@ kind: Kustomization
 namespace: kio-stg
 images:
 - name: harbor.squid-ink.us/politeauthority/kio-api
-  newTag: stg-feat-home-assistant
+  newTag: stg-main
 - name: harbor.squid-ink.us/politeauthority/kio-ui
-  newTag: stg-feat-home-assistant
+  newTag: stg-main
 resources:
 - ../../base
-- ./httproute.yaml
+- ./ingressroute.yaml
 - ./secrets/sealed-api-secrets.yaml
 
 patches:

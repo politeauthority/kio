@@ -1,0 +1,108 @@
+name: Tests
+
+# 🧪 Full test-suite gate for pull requests into main or staging. Runs every
+# environment-independent suite (API unit, pi-agent, HA integration) in
+# parallel and writes a per-suite summary. Environment-dependent e2e tests
+# (task test:e2e:*) are intentionally excluded — they need a live deployment
+# (see stg.yaml's regression job).
+
+on:
+  pull_request:
+    branches: [main, staging]
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api-unit:
+    name: API unit tests
+    runs-on: kio   # task test:api:docker needs Docker (DinD)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install task
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Run API unit tests (docker)
+        id: test
+        run: |
+          set -o pipefail
+          task test:api:docker 2>&1 | tee /tmp/api.txt
+      - name: 📋 Summary
+        if: always()
+        run: |
+          line=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/api.txt | tail -1 || true)
+          if [ "${{ steps.test.outcome }}" = "success" ]; then head="### ✅ 🐍 API unit tests passed"; else head="### ❌ 🐍 API unit tests failed"; fi
+          {
+            echo "$head"
+            echo ""
+            echo "🔬 \`task test:api:docker\` — pytest inside the prod-mirror image"
+            echo ""
+            echo "> 📊 \`${line:-see job logs}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  pi-agent:
+    name: pi-agent unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install task
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Run pi-agent unit tests
+        id: test
+        run: |
+          set -o pipefail
+          task test:pi-agent 2>&1 | tee /tmp/pi.txt
+      - name: 📋 Summary
+        if: always()
+        run: |
+          line=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/pi.txt | tail -1 || true)
+          if [ "${{ steps.test.outcome }}" = "success" ]; then head="### ✅ 🥧 pi-agent unit tests passed"; else head="### ❌ 🥧 pi-agent unit tests failed"; fi
+          {
+            echo "$head"
+            echo ""
+            echo "🔬 \`task test:pi-agent\` — pytest for the Raspberry Pi agent"
+            echo ""
+            echo "> 📊 \`${line:-see job logs}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ha-integration:
+    name: HA integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install task
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Run HA integration tests
+        id: test
+        run: |
+          set -o pipefail
+          task ha:test 2>&1 | tee /tmp/ha.txt
+      - name: 📋 Summary
+        if: always()
+        run: |
+          line=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/ha.txt | tail -1 || true)
+          if [ "${{ steps.test.outcome }}" = "success" ]; then head="### ✅ 🏠 HA integration tests passed"; else head="### ❌ 🏠 HA integration tests failed"; fi
+          {
+            echo "$head"
+            echo ""
+            echo "🔬 \`task ha:test\` — Home Assistant custom-component suite"
+            echo ""
+            echo "> 📊 \`${line:-see job logs}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

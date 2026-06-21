@@ -1,0 +1,45 @@
+[project]
+name = "kio-pi-agent"
+version = "0.1.0"
+description = "kio kiosk Pi agent — controls Chromium via CDP and talks to the kio API over MQTT/HTTP"
+requires-python = ">=3.12"
+dependencies = [
+    "paho-mqtt>=2.1",
+    "PyYAML>=6.0",
+    "requests>=2.31",
+    "websocket-client>=1.8",
+]
+
+[dependency-groups]
+dev = [
+    "black>=24.0",
+    "ruff>=0.4.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["kio_agent*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Unit tests live at tests/pi-agent/ (a self-contained project, mirroring
+# tests/e2e/). Run them with: cd tests/pi-agent && uv run pytest
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = [
+    "E501",  # line too long — Black handles this
+    "E402",  # module-level import not at top
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kio_agent"]

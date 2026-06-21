@@ -1,0 +1,16 @@
+[project]
+name = "kio-pi-agent-tests"
+version = "0.1.0"
+description = "Unit tests for the kio Pi agent (kio_agent package under src/pi-agent)"
+requires-python = ">=3.12"
+# The agent's runtime deps are required to import its modules during collection.
+dependencies = [
+    "pytest>=8.0",
+    "paho-mqtt>=2.1",
+    "PyYAML>=6.0",
+    "requests>=2.31",
+    "websocket-client>=1.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]

@@ -1,0 +1,131 @@
+name: PRD
+
+# Production pipeline. On a push to main or cicd: run unit tests, then (unless the
+# commit says [skip release]) cut a new patch release — bump the version, build + push
+# clean SemVer prod images to Harbor, stamp the prd kustomization, and commit + tag +
+# push. ArgoCD (watching kubernetes-manifests/envs/prd on main) syncs the new tag,
+# running the PreSync migrate hook before rolling the deployments.
+#
+# The release commit carries [skip release] so the push it makes back to the branch
+# re-runs the tests but does NOT trigger a second release (no infinite loop).
+
+on:
+  push:
+    branches: [main, cicd]
+
+# Serialize releases per branch; never cancel one mid-flight (a half-pushed release is
+# worse than waiting).
+concurrency:
+  group: prd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write  # push the release commit + tag back to the branch
+
+jobs:
+  release:
+    runs-on: kio
+    env:
+      # Registry/org for image build+push (Taskfile defaults to a placeholder
+      # and otherwise reads a local .env that does not exist in CI).
+      HARBOR: harbor.squid-ink.us/politeauthority
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history + tags so git-tag works
+          token: ${{ secrets.KIO_PUSH_TOKEN || github.token }}
+
+      - name: Install toolchain (task, kustomize)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Unit tests
+        id: unit
+        run: |
+          set -o pipefail
+          task test:api:docker 2>&1 | tee /tmp/unit.txt
+
+      - name: Release gate ([skip release] in commit message?)
+        id: gate
+        run: |
+          if git log -1 --pretty=%B | grep -qF '[skip release]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::[skip release] found — tests only, no release."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Harbor
+        if: steps.gate.outputs.skip == 'false'
+        uses: docker/login-action@v3
+        with:
+          registry: harbor.squid-ink.us
+          username: robot$kio-ci
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Bump patch version
+        if: steps.gate.outputs.skip == 'false'
+        run: task bump:patch
+
+      - name: Build & push production images
+        if: steps.gate.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          task build-prd
+          task push-prd
+          task build-ui-prd
+          task push-ui-prd
+
+      - name: Stamp prd kustomization
+        if: steps.gate.outputs.skip == 'false'
+        run: task stamp-prd
+
+      - name: Commit, tag, and push the release
+        if: steps.gate.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          git config user.name "kio-ci"
+          git config user.email "ci@kio.colfax.int"
+          git add VERSION \
+                  src/ha-integration/custom_components/kio/manifest.json \
+                  kubernetes-manifests/envs/prd/kustomization.yaml
+          # [skip release] so this push re-runs tests but not another release.
+          git commit -m "release v${VERSION} [skip release]"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "v${VERSION}"
+          echo "::notice::Released v${VERSION} — ArgoCD will sync prd (migrate hook → rollout)."
+
+      - name: 📋 Release summary
+        if: always()
+        run: |
+          UNIT=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/unit.txt 2>/dev/null | tail -1 || true)
+          VERSION="$(cat VERSION 2>/dev/null || echo '?')"
+          {
+            echo "# 🚀 kio PRD pipeline"
+            echo ""
+            echo "🌿 Branch \`${GITHUB_REF_NAME}\` · 🧪 Unit tests: \`${UNIT:-see logs}\`"
+            echo ""
+            if [ "${{ job.status }}" != "success" ]; then
+              echo "## ❌ Pipeline failed"
+              echo ""
+              echo "🔎 Check the failing step above — no release was published."
+            elif [ "${{ steps.gate.outputs.skip }}" = "true" ]; then
+              echo "## ⏭️ Tests only — release skipped"
+              echo ""
+              echo "💬 Commit message contained \`[skip release]\` — ✅ tests ran, no version cut."
+            else
+              echo "## ✅ Released \`v${VERSION}\` 🎉"
+              echo ""
+              echo "| 🏷️ Version | 🐳 Images | 📦 Registry |"
+              echo "| --- | --- | --- |"
+              echo "| \`v${VERSION}\` | \`kio-api:${VERSION}\` · \`kio-ui:${VERSION}\` | \`harbor.squid-ink.us/politeauthority\` |"
+              echo ""
+              echo "🏷️ Tag \`v${VERSION}\` pushed · 🔄 ArgoCD prd syncs (⚠️ migrate hook → rollout) on the branch it tracks."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
