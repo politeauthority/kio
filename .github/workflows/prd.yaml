@@ -44,7 +44,10 @@ jobs:
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
       - name: Unit tests
-        run: task test:api:docker
+        id: unit
+        run: |
+          set -o pipefail
+          task test:api:docker 2>&1 | tee /tmp/unit.txt
 
       - name: Release gate ([skip release] in commit message?)
         id: gate
@@ -97,3 +100,32 @@ jobs:
           git push origin "HEAD:${GITHUB_REF_NAME}"
           git push origin "v${VERSION}"
           echo "::notice::Released v${VERSION} — ArgoCD will sync prd (migrate hook → rollout)."
+
+      - name: 📋 Release summary
+        if: always()
+        run: |
+          UNIT=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/unit.txt 2>/dev/null | tail -1 || true)
+          VERSION="$(cat VERSION 2>/dev/null || echo '?')"
+          {
+            echo "# 🚀 kio PRD pipeline"
+            echo ""
+            echo "🌿 Branch \`${GITHUB_REF_NAME}\` · 🧪 Unit tests: \`${UNIT:-see logs}\`"
+            echo ""
+            if [ "${{ job.status }}" != "success" ]; then
+              echo "## ❌ Pipeline failed"
+              echo ""
+              echo "🔎 Check the failing step above — no release was published."
+            elif [ "${{ steps.gate.outputs.skip }}" = "true" ]; then
+              echo "## ⏭️ Tests only — release skipped"
+              echo ""
+              echo "💬 Commit message contained \`[skip release]\` — ✅ tests ran, no version cut."
+            else
+              echo "## ✅ Released \`v${VERSION}\` 🎉"
+              echo ""
+              echo "| 🏷️ Version | 🐳 Images | 📦 Registry |"
+              echo "| --- | --- | --- |"
+              echo "| \`v${VERSION}\` | \`kio-api:${VERSION}\` · \`kio-ui:${VERSION}\` | \`harbor.squid-ink.us/politeauthority\` |"
+              echo ""
+              echo "🏷️ Tag \`v${VERSION}\` pushed · 🔄 ArgoCD prd syncs (⚠️ migrate hook → rollout) on the branch it tracks."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
