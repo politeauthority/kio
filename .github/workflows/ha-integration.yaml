@@ -27,4 +27,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Run tests
-        run: uv run --with-requirements requirements_test.txt pytest -q
+        id: test
+        run: |
+          set -o pipefail
+          uv run --with-requirements requirements_test.txt pytest -q 2>&1 | tee /tmp/ha.txt
+      - name: 📋 Summary
+        if: always()
+        run: |
+          line=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/ha.txt | tail -1 || true)
+          if [ "${{ steps.test.outcome }}" = "success" ]; then head="## ✅ 🏠 HA integration tests passed"; else head="## ❌ 🏠 HA integration tests failed"; fi
+          {
+            echo "$head"
+            echo ""
+            echo "🧩 Home Assistant custom-component suite (config flow + entity setup)"
+            echo ""
+            echo "> 📊 \`${line:-see job logs}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

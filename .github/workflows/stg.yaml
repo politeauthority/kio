@@ -40,7 +40,10 @@ jobs:
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
       - name: Unit tests
-        run: task test:api:docker
+        id: unit
+        run: |
+          set -o pipefail
+          task test:api:docker 2>&1 | tee /tmp/unit.txt
 
       - name: Compute PR tag + namespace
         id: meta
@@ -63,6 +66,29 @@ jobs:
           task push-stg     BRANCH=pr-${{ github.event.number }}
           task build-ui-stg BRANCH=pr-${{ github.event.number }}
           task push-ui-stg  BRANCH=pr-${{ github.event.number }}
+
+      - name: 📋 Build summary
+        if: always()
+        run: |
+          UNIT=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/unit.txt 2>/dev/null | tail -1 || true)
+          TAG="stg-pr-${{ github.event.number }}"
+          {
+            echo "# 🧪 kio STG · PR #${{ github.event.number }}"
+            echo ""
+            echo "🧪 Unit tests: \`${UNIT:-see logs}\`"
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "## ✅ Staging images built & pushed"
+              echo ""
+              echo "| 🏷️ Tag | 🐳 Images | 🧭 Ephemeral env |"
+              echo "| --- | --- | --- |"
+              echo "| \`${TAG}\` | \`kio-api:${TAG}\` · \`kio-ui:${TAG}\` | \`kio-stg-pr-${{ github.event.number }}\` |"
+              echo ""
+              echo "🔄 ArgoCD's PR ApplicationSet deploys these tags; 🔁 regression runs next."
+            else
+              echo "## ❌ Build / unit tests failed — see logs above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   regression:
     needs: test-build
@@ -101,6 +127,22 @@ jobs:
           task test:e2e:api
           task test:e2e:ui
 
+      - name: 📋 Regression summary
+        if: always()
+        run: |
+          NS="${{ needs.test-build.outputs.namespace }}"
+          {
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "## ✅ 🔁 Regression passed — PR #${{ github.event.number }}"
+              echo ""
+              echo "🌐 e2e (API + UI) green against \`${NS}\`."
+            else
+              echo "## ❌ 🔁 Regression failed — PR #${{ github.event.number }}"
+              echo ""
+              echo "🔎 Ephemeral env \`${NS}\` — check rollout / e2e logs above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   promote:
     needs: regression
     runs-on: kio
@@ -111,4 +153,6 @@ jobs:
       name: staging
     steps:
       - name: Approved
-        run: echo "Staging approved for PR #${{ github.event.number }}."
+        run: |
+          echo "Staging approved for PR #${{ github.event.number }}."
+          echo "## 🎉 ✅ Staging approved — PR #${{ github.event.number }} is promote / merge-ready" >> "$GITHUB_STEP_SUMMARY"
