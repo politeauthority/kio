@@ -9,7 +9,7 @@ name: HA integration
 
 on:
   push:
-    branches: [main]
+    branches: [main, cicd]
     paths: ["src/ha-integration/**"]
   pull_request:
     paths: ["src/ha-integration/**"]
