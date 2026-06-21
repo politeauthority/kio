@@ -56,3 +56,5 @@ maps each kiosk to a HA Device. See the dev doc for the development loop.
   feature loss (a stale entity just goes unavailable). Acceptable for now.
 - `update_agent` is intentionally NOT in the API's `ALLOWED_COMMANDS`; always use the
   dedicated endpoint so the server picks an API-compatible git ref.
+
+<!-- CI: ha-integration workflow validated on the cicd branch (2026-06-21). -->
