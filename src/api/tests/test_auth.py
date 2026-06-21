@@ -1,7 +1,7 @@
 """Unit tests for app.auth — no HTTP layer, functions called directly."""
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
@@ -19,6 +19,21 @@ def _make_token(sub="testuser", exp_offset=3600, secret=_SECRET, iss="kio-dev") 
         secret,
         algorithm="HS256",
     )
+
+
+def _empty_session():
+    """Mock AsyncSession where no DB-managed API key matches.
+
+    require_dashboard_auth gained a `session: AsyncSession = Depends(get_session)`
+    param for DB-backed API keys. When called directly (no FastAPI DI), tests must
+    supply a session; this one makes _check_db_api_key fall through (no row found).
+    """
+    session = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=result)
+    session.commit = AsyncMock()
+    return session
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +114,7 @@ async def test_invalid_api_key_falls_through_to_401():
         s.authentik_issuer = ""
         s.dev_password = ""
         with pytest.raises(HTTPException) as exc:
-            await require_dashboard_auth(credentials=None, api_key="kio_wrong", token=None)
+            await require_dashboard_auth(credentials=None, api_key="kio_wrong", token=None, session=_empty_session())
     assert exc.value.status_code == 401
 
 
@@ -136,7 +151,7 @@ async def test_valid_dev_jwt_via_bearer():
         s.api_keys_set = set()
         s.authentik_issuer = ""
         s.dev_password = _SECRET
-        result = await require_dashboard_auth(credentials=creds, api_key=None, token=None)
+        result = await require_dashboard_auth(credentials=creds, api_key=None, token=None, session=_empty_session())
     assert result == "alice"
 
 
@@ -150,7 +165,7 @@ async def test_expired_dev_jwt_via_bearer_raises_401():
         s.authentik_issuer = ""
         s.dev_password = _SECRET
         with pytest.raises(HTTPException) as exc:
-            await require_dashboard_auth(credentials=creds, api_key=None, token=None)
+            await require_dashboard_auth(credentials=creds, api_key=None, token=None, session=_empty_session())
     assert exc.value.status_code == 401
 
 
@@ -162,5 +177,5 @@ async def test_token_query_param_accepted():
         s.api_keys_set = set()
         s.authentik_issuer = ""
         s.dev_password = _SECRET
-        result = await require_dashboard_auth(credentials=None, api_key=None, token=token)
+        result = await require_dashboard_auth(credentials=None, api_key=None, token=token, session=_empty_session())
     assert result == "bob"

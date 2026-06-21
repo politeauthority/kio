@@ -1,0 +1,114 @@
+name: STG
+
+# Per-PR staging pipeline. On a pull request: run unit tests, build + push a staging
+# image tagged for the PR, let ArgoCD's ApplicationSet (PR generator, in private-ops)
+# spin up an ephemeral `kio-stg-pr-<N>` namespace from it, run regression e2e against
+# that env, then gate on a manual `staging` environment approval. Closing the PR removes
+# the ApplicationSet entry → the namespace is pruned.
+
+on:
+  pull_request:
+    branches: [main, cicd]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: stg-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write  # post the ephemeral env / regression status back to the PR
+
+jobs:
+  test-build:
+    runs-on: kio
+    env:
+      # Registry/org for image build+push (Taskfile defaults to a placeholder
+      # and otherwise reads a local .env that does not exist in CI).
+      HARBOR: harbor.squid-ink.us/politeauthority
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      namespace: ${{ steps.meta.outputs.namespace }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain (task)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Unit tests
+        run: task test:api:docker
+
+      - name: Compute PR tag + namespace
+        id: meta
+        run: |
+          echo "tag=stg-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+          echo "namespace=kio-stg-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: harbor.squid-ink.us
+          username: robot$kio-ci
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Build & push staging images (test target)
+        run: |
+          set -euo pipefail
+          # BRANCH=pr-<N> → image tag stg-pr-<N> (the tag the ApplicationSet deploys).
+          task build-stg    BRANCH=pr-${{ github.event.number }}
+          task push-stg     BRANCH=pr-${{ github.event.number }}
+          task build-ui-stg BRANCH=pr-${{ github.event.number }}
+          task push-ui-stg  BRANCH=pr-${{ github.event.number }}
+
+  regression:
+    needs: test-build
+    runs-on: kio
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain (task, kubectl)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      # The ArgoCD ApplicationSet PR generator (private-ops/kio/kio-stg-appset.yaml)
+      # deploys ${{ needs.test-build.outputs.namespace }} from this PR's image tag.
+      - name: Wait for ephemeral env to be ready
+        run: |
+          set -euo pipefail
+          NS="${{ needs.test-build.outputs.namespace }}"
+          kubectl rollout status deployment/kio-api -n "$NS" --timeout=300s
+          kubectl rollout status deployment/kio-ui  -n "$NS" --timeout=300s
+
+      - name: Regression (e2e API + UI) against the ephemeral env
+        env:
+          # TODO(infra): point these at the per-PR ingress/route for the ephemeral env
+          # (e.g. https://stg-pr-<N>.kio.colfax.int). Until per-PR DNS/HTTPRoute exists,
+          # target the in-cluster Services from the runner.
+          KIO_API_URL: http://kio-api.${{ needs.test-build.outputs.namespace }}.svc:8000
+          KIO_UI_URL: http://kio-ui.${{ needs.test-build.outputs.namespace }}.svc:8080
+          KIO_USERNAME: ${{ secrets.STG_USERNAME }}
+          KIO_PASSWORD: ${{ secrets.STG_PASSWORD }}
+        run: |
+          set -euo pipefail
+          task test:e2e:install
+          task test:e2e:api
+          task test:e2e:ui
+
+  promote:
+    needs: regression
+    runs-on: kio
+    # Manual gate: this job only runs after a reviewer approves the `staging`
+    # environment in the PR (Settings → Environments → staging → required reviewers).
+    # Approve = promote/merge-ready; reject (or leave unapproved) = deny.
+    environment:
+      name: staging
+    steps:
+      - name: Approved
+        run: echo "Staging approved for PR #${{ github.event.number }}."

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from tests.conftest import make_kiosk
 
@@ -155,7 +155,7 @@ async def test_send_valid_command(client):
         r = await client.post(f"/kiosks/{kiosk.id}/command", json={"command": "reload"})
 
     assert r.status_code == 204
-    mock_pub.assert_called_once_with(str(kiosk.id), {"command": "reload"})
+    mock_pub.assert_called_once_with(str(kiosk.id), {"command": "reload", "command_id": ANY})
 
 
 async def test_send_invalid_command_returns_400(client):
@@ -232,7 +232,7 @@ async def test_navigate(client):
         r = await client.post(f"/kiosks/{kiosk.id}/navigate", json={"url": "https://example.com"})
 
     assert r.status_code == 204
-    mock_nav.assert_called_once_with(str(kiosk.id), "https://example.com")
+    mock_nav.assert_called_once_with(str(kiosk.id), "https://example.com", command_id=ANY)
 
 
 async def test_navigate_kiosk_not_found(client):

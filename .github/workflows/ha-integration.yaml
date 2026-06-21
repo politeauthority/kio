@@ -1,0 +1,30 @@
+name: HA integration
+
+# Runs the Home Assistant custom-component test suite when the integration
+# changes. The suite uses pytest-homeassistant-custom-component, which pins a
+# matching homeassistant version and exercises config flow + entity setup
+# against a real (in-memory) HA core — so it catches breakage without deploying
+# to the HA host. Full hassfest/HACS validation is deferred to the Phase 3 repo
+# split (see src/ha-integration/PLAN.md).
+
+on:
+  push:
+    branches: [main, cicd]
+    paths: ["src/ha-integration/**"]
+  pull_request:
+    paths: ["src/ha-integration/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/ha-integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Run tests
+        run: uv run --with-requirements requirements_test.txt pytest -q
