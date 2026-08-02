@@ -81,6 +81,14 @@ class KioAgent:
         self._stop = threading.Event()
         self._player: PlaylistPlayer | None = None
         self._cycler: TabCycler | None = None
+        # Heartbeats only carry resume state (browser_tabs / playlist_state /
+        # tab_cycle_state) once boot-time resume has read the previous run's
+        # state back from the API. Before that, Chromium isn't up yet and a
+        # heartbeat would overwrite the saved state with empties — exactly the
+        # state _resume_state is about to restore. Cleared again when a reboot
+        # is initiated so shutdown-window heartbeats can't wipe the final
+        # snapshot either.
+        self._report_state = False
         self._current_input: str | None = None  # synced by set_input + monitor thread
         # Dispatch MQTT command handling off the network loop thread so long-running
         # operations (preload, wait_for_chromium) don't block keepalive ping/pong.
@@ -111,12 +119,64 @@ class KioAgent:
 
     # --- Playlist control ---
 
-    def _resume_state(self) -> None:
+    # Boot resume retries: transient failures (API not reachable yet, Chromium
+    # still launching) get another chance instead of abandoning resume — because
+    # once heartbeats start carrying state, the un-resumed (empty) live state
+    # overwrites the saved state we failed to read.
+    RESUME_RETRIES = 5
+    RESUME_RETRY_SECONDS = 60
+
+    def _suspend_state_reporting(self, reenable_after: float = 180.0) -> None:
+        """Stop heartbeats from carrying resume state, expecting imminent death.
+
+        Called when a reboot has been initiated: the saved state snapshot must
+        survive the shutdown window (Chromium dies before the agent does, so a
+        late heartbeat would record tabs=[]). If the reboot never happens the
+        timer re-enables reporting — everything is still running, so reporting
+        live state again is correct, and without this the agent would silently
+        never save state again until its next restart.
+        """
+        self._report_state = False
+        timer = threading.Timer(reenable_after, lambda: setattr(self, "_report_state", True))
+        timer.daemon = True
+        timer.start()
+
+    def _resume_state(self, _attempt: int = 0) -> None:
         """Fetch the kiosk's last active state from the API and resume it.
 
-        Called once at boot, before the first heartbeat, so the pre-reboot
-        playlist_state is still in the database and can be read here.
+        Called once at boot, before the first state-carrying heartbeat, so the
+        pre-reboot playlist_state is still in the database and can be read here.
+        Transient failures reschedule the whole attempt (bounded); terminally,
+        heartbeats start carrying state — until then they omit it so they can't
+        clobber the saved state this method needs.
         """
+        try:
+            retry = self._resume_state_inner()
+        except Exception as exc:
+            logger.warning("Boot resume: unexpected failure: %s", exc)
+            retry = False
+        if retry and _attempt < self.RESUME_RETRIES:
+            logger.info(
+                "Boot resume: not ready — retrying in %ds (attempt %d/%d)",
+                self.RESUME_RETRY_SECONDS,
+                _attempt + 1,
+                self.RESUME_RETRIES,
+            )
+            timer = threading.Timer(self.RESUME_RETRY_SECONDS, self._resume_state, args=(_attempt + 1,))
+            timer.daemon = True
+            timer.start()
+            return
+        if retry:
+            logger.warning("Boot resume: giving up after %d attempts", self.RESUME_RETRIES + 1)
+        self._report_state = True
+
+    def _resume_state_inner(self) -> bool:
+        """One resume attempt. Returns True when it should be retried later."""
+        # An operator (or a retry racing a command) already started playback —
+        # the saved pre-restart state is stale now; don't stomp the live session.
+        if self._player is not None or self._cycler is not None:
+            logger.info("Boot resume: superseded by live playback — skipping")
+            return False
         try:
             resp = requests.get(
                 f"{self.api_url}/agent/state",
@@ -125,22 +185,35 @@ class KioAgent:
                 verify=runtime.TLS_VERIFY,
             )
             if resp.status_code != 200:
+                # The API may itself be coming up (rolling restart, node booted
+                # faster than the cluster) — retryable.
                 logger.warning("Boot resume: state endpoint returned HTTP %s", resp.status_code)
-                return
+                return True
             state = resp.json()
         except Exception as exc:
             logger.warning("Boot resume: failed to fetch state: %s", exc)
-            return
+            return True
 
         playlist = state.get("playlist")
         if not playlist or not playlist.get("items"):
             # No playlist — reopen whatever tabs the node had before the reboot,
             # falling back to the default page if there were none worth restoring.
-            if self._restore_tabs(state.get("tabs") or []):
-                return
+            tabs = state.get("tabs") or []
+            if tabs and not _wait_for_chromium():
+                logger.warning("Boot resume: Chromium not ready, will retry tab restore")
+                return True
+            if self._restore_tabs(tabs):
+                # Tabs are back — restart tab cycling if it was running too.
+                cycle = state.get("tab_cycle")
+                if cycle:
+                    self._start_tab_cycle(
+                        int(cycle.get("interval_seconds", 15)),
+                        tab_order=[u for u in (cycle.get("tab_order") or []) if isinstance(u, str)],
+                    )
+                return False
             logger.info("Boot resume: no active playlist or saved tabs to resume")
             self._show_default_page()
-            return
+            return False
 
         last_idx = playlist.get("last_idx") or 0
         logger.info(
@@ -149,8 +222,8 @@ class KioAgent:
             last_idx + 1,
         )
         if not _wait_for_chromium():
-            logger.warning("Boot resume: Chromium not ready after timeout, skipping")
-            return
+            logger.warning("Boot resume: Chromium not ready, will retry playlist resume")
+            return True
 
         self._start_playlist(
             playlist["id"],
@@ -159,6 +232,7 @@ class KioAgent:
             start_idx=last_idx,
             refresh_seconds=int(playlist.get("refresh_seconds", PLAYLIST_REFRESH_SECONDS)),
         )
+        return False
 
     def _restore_tabs(self, tabs: list[dict]) -> bool:
         """Reopen the tabs the node had open before its last reboot.
@@ -177,16 +251,32 @@ class KioAgent:
             logger.warning("Boot resume: Chromium not ready, skipping tab restore")
             return False
 
-        logger.info("Boot resume: restoring %d tab(s) open before reboot", len(restorable))
         active_url = next((t["url"] for t in restorable if t.get("active")), restorable[0]["url"])
 
-        # Reuse the tab browser-start already opened for the first URL; open the rest.
+        # After a daemon-only restart Chromium is still running with its tabs —
+        # reuse them instead of opening duplicates. Saved URLs came from CDP, so
+        # they match the live tab URLs exactly for any tab that survived.
         ids_by_url: dict[str, str] = {}
-        navigate(restorable[0]["url"])
-        first = _get_tab()
-        if first:
-            ids_by_url[restorable[0]["url"]] = first["id"]
-        for t in restorable[1:]:
+        for t in _get_tabs():
+            if t.get("url"):
+                ids_by_url.setdefault(t["url"], t["id"])
+        ids_by_url = {t["url"]: ids_by_url[t["url"]] for t in restorable if t["url"] in ids_by_url}
+
+        missing = [t for t in restorable if t["url"] not in ids_by_url]
+        logger.info(
+            "Boot resume: restoring %d tab(s) open before restart (%d still open)",
+            len(restorable),
+            len(restorable) - len(missing),
+        )
+        if not ids_by_url and missing:
+            # Fresh boot: reuse the tab browser-start already opened for the first
+            # URL, then open the rest as background tabs.
+            navigate(missing[0]["url"])
+            first = _get_tab()
+            if first:
+                ids_by_url[missing[0]["url"]] = first["id"]
+            missing = missing[1:]
+        for t in missing:
             opened = _open_tab(t["url"])
             if opened:
                 ids_by_url[t["url"]] = opened["id"]
@@ -558,11 +648,17 @@ class KioAgent:
             "agent_version": AGENT_VERSION,
             "boot_id": BOOT_ID,
             "current_url": get_current_url() if online else None,
-            "browser_tabs": _get_tabs() if online else [],
-            "playlist_state": self._player.current_state() if self._player is not None else None,
-            "tab_cycle_state": self._cycler.current_state() if self._cycler is not None else None,
             "reporting_api_url": self.api_url,
         }
+        # Resume state travels only on post-resume online heartbeats. Omitting the
+        # keys (rather than sending empties/None) tells the API "no change" — so a
+        # pre-resume boot heartbeat, the final offline heartbeat, and the shutdown
+        # window after a reboot command all leave the saved state intact for the
+        # next boot's _resume_state.
+        if online and self._report_state:
+            payload["browser_tabs"] = _get_tabs()
+            payload["playlist_state"] = self._player.current_state() if self._player is not None else None
+            payload["tab_cycle_state"] = self._cycler.current_state() if self._cycler is not None else None
         if include_metadata or not online:
             payload["current_input"] = self._get_current_input() if online else None
             payload["display_on"] = self._get_display_on() if online else False
@@ -904,10 +1000,17 @@ class KioAgent:
         # If a self-update just ran, log update_agent_success / update_agent_failure.
         # Done after the settings sync so the detached updater has had a moment to
         # finish writing its log before we read it.
-        _report_update_result()
-        # Resume any active playlist before the first heartbeat so the DB's
-        # playlist_state (written by the previous run) is still readable here.
-        self._resume_state()
+        rebooting = _report_update_result()
+        # Resume any active playlist before the first state-carrying heartbeat so
+        # the DB's playlist_state (written by the previous run) is still readable
+        # here. Skipped when the update flow just initiated a reboot: the system
+        # is going down, and state reporting stays suspended so the remaining
+        # heartbeats can't overwrite the state the post-reboot run will resume
+        # from (the suspend self-heals if the reboot never happens).
+        if rebooting:
+            self._suspend_state_reporting()
+        else:
+            self._resume_state()
         # Send initial heartbeat with all data, then the loop handles subsequent ones.
         # Features are NOT pushed here — they're admin-authoritative and only change
         # via explicit detection or detected display drift.

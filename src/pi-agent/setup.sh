@@ -273,6 +273,10 @@ MQTT_PORT=""
 MQTT_PREFIX=""
 START_URL=""
 FEATURES=""
+# api.tls_verify from an existing config (false | /path/to/ca.crt | empty=default).
+# Carried through a reinstall so an unattended self-update keeps the node's TLS
+# posture instead of silently resetting it to system-store verification.
+EXISTING_TLS_VERIFY=""
 
 yaml_get() {
   local key="$1"
@@ -343,6 +347,20 @@ check_api_reachable() {
   if [[ "$http_code" == "200" ]]; then
     echo "  API reachable."
     return
+  fi
+  # A redirect from an http:// URL almost always means the server moved to HTTPS
+  # (ingress http->https redirect). Retry the https:// equivalent; if it answers,
+  # upgrade API_URL so the rest of setup — and the config written at the end —
+  # use the working scheme instead of failing an unattended self-update.
+  if [[ "$http_code" =~ ^30[1278]$ && "$url" == http://* ]]; then
+    local https_url="https://${url#http://}"
+    echo "  ${url} redirects (HTTP $http_code) — trying $https_url ..."
+    http_code=$(curl -s $CURL_TLS_OPT -o /dev/null -w "%{http_code}" --max-time 5 "${https_url}/_health" 2>/dev/null) && rc=0 || rc=$?
+    if [[ "$http_code" == "200" ]]; then
+      API_URL="$https_url"
+      echo "  API reachable at $https_url — using it (config will be updated)."
+      return
+    fi
   fi
   # curl 35/51/58/60/66/77/83 = TLS/cert trust failures: the API answered but its
   # cert isn't trusted by this Pi. Call this out specifically — otherwise the
@@ -535,6 +553,22 @@ elif [[ -f "$CONFIG_FILE" ]] && [[ -z "$API_TOKEN_ARG" ]]; then
   MQTT_HOST=$(yaml_get_nested mqtt host)
   MQTT_PORT=$(yaml_get_nested mqtt port)
   MQTT_PREFIX=$(yaml_get_nested mqtt topic_prefix)
+  EXISTING_TLS_VERIFY=$(yaml_get_nested api tls_verify)
+  # Honor the config's TLS posture for setup's own curls, unless the operator
+  # overrode it on the command line (--insecure-tls / --accept-cert).
+  if [[ "$INSECURE_TLS" != "1" && "$ACCEPT_CERT" != "1" ]]; then
+    case "$EXISTING_TLS_VERIFY" in
+      false) CURL_TLS_OPT="-k" ;;
+      ""|true) ;;
+      *)
+        if [[ -f "$EXISTING_TLS_VERIFY" ]]; then
+          CURL_TLS_OPT="--cacert $EXISTING_TLS_VERIFY"
+        else
+          echo "  WARNING: tls_verify CA bundle $EXISTING_TLS_VERIFY not found — using system trust store."
+          EXISTING_TLS_VERIFY=""
+        fi ;;
+    esac
+  fi
   confirm_http_transport "$API_URL"
   [[ "$ACCEPT_CERT" == "1" ]] && pin_api_cert "$API_URL"
   check_api_reachable "$API_URL"
@@ -650,11 +684,14 @@ else
   # Verify TLS by default (agent treats a missing tls_verify as true).
   #   --insecure-tls  -> tls_verify: false  (no verification)
   #   --accept-cert   -> tls_verify: <pinned cert path>  (verify against it)
+  #   neither flag    -> keep what the existing config had (reinstall/self-update)
   TLS_VERIFY_LINE=""
   if [[ "$INSECURE_TLS" == "1" ]]; then
     TLS_VERIFY_LINE=$'\n  tls_verify: false'
   elif [[ -n "$PINNED_CERT" ]]; then
     TLS_VERIFY_LINE=$'\n  tls_verify: '"$PINNED_CERT"
+  elif [[ -n "$EXISTING_TLS_VERIFY" && "$EXISTING_TLS_VERIFY" != "true" ]]; then
+    TLS_VERIFY_LINE=$'\n  tls_verify: '"$EXISTING_TLS_VERIFY"
   fi
 
   FEATURES_YAML=""

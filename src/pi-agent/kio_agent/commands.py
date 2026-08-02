@@ -14,6 +14,8 @@ the boot following a self-update.
 import json
 import os
 import subprocess
+import threading
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -61,7 +63,7 @@ def _clear_update_marker() -> None:
         pass
 
 
-def _report_update_result() -> None:
+def _report_update_result() -> bool:
     """After an update, log its outcome — and reboot to fully apply it.
 
     The update_agent handler leaves a marker before the self-update restarts the
@@ -72,12 +74,16 @@ def _report_update_result() -> None:
       2. Boot after the reboot: the marker's reboot_pending flag tells us to report
          update_agent_success and clear the marker.
     A failed update reports update_agent_failure and does NOT reboot.
+
+    Returns True when it initiated a reboot — the caller then skips boot-time
+    resume (the system is going down; resuming into a dying Chromium could only
+    disturb the saved state the post-reboot run needs).
     """
     if not runtime.agent:
-        return
+        return False
     try:
         if not os.path.exists(UPDATE_STATE_FILE):
-            return
+            return False
         try:
             with open(UPDATE_STATE_FILE) as f:
                 marker = json.load(f)
@@ -96,7 +102,7 @@ def _report_update_result() -> None:
                 f"Updated {from_version or '?'} -> {to_version} (ref {ref}) and rebooted",
             )
             _clear_update_marker()
-            return
+            return False
 
         # Phase 1 — first boot after the reinstall. Decide success vs failure.
         changed = bool(from_version) and from_version != to_version
@@ -114,7 +120,7 @@ def _report_update_result() -> None:
                 msg = f"{msg}: {tail[-200:]}"
             _report_command("update_agent_failure", False, msg)
             _clear_update_marker()
-            return
+            return False
 
         # Success — flag the marker so the post-reboot boot reports success, then
         # reboot. Persist the flag BEFORE rebooting so a failed write can't loop.
@@ -130,7 +136,7 @@ def _report_update_result() -> None:
                 f"Updated {from_version or '?'} -> {to_version} (ref {ref})",
             )
             _clear_update_marker()
-            return
+            return False
 
         _report_command(
             "update_agent_rebooting",
@@ -139,8 +145,64 @@ def _report_update_result() -> None:
         )
         logger.info("Rebooting to apply update %s -> %s", from_version, to_version)
         subprocess.run(["sudo", "reboot"], check=False)
+        return True
     except Exception as exc:
         logger.warning("Failed to report update result: %s", exc)
+        return False
+
+
+def _watch_self_update(log_offset: int) -> None:
+    """Report a self-update that dies before it restarts the agent.
+
+    A successful update ends with setup.sh restarting kio-agent, which kills this
+    process — the boot-time :func:`_report_update_result` owns that report. So if
+    this thread outlives the kio-agent-self-update transient unit, the update
+    aborted early (e.g. a failed preflight) and would otherwise vanish silently:
+    report update_agent_failure with the log tail so the dashboard shows why.
+    """
+    started = time.monotonic()
+    deadline = started + 15 * 60
+    seen_running = False
+    while time.monotonic() < deadline:
+        time.sleep(5)
+        try:
+            state = subprocess.run(
+                ["systemctl", "is-active", "kio-agent-self-update"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+        except Exception:
+            continue
+        if state in ("activating", "active", "deactivating", "reloading"):
+            seen_running = True
+            continue
+        # Not running. Give systemd-run a minute to start the unit before
+        # concluding it never launched (a failing unit can also finish inside
+        # one poll interval — the log delta below distinguishes the two).
+        if not seen_running and time.monotonic() - started < 60:
+            continue
+        break
+    tail = ""
+    try:
+        with open(UPDATE_LOG_FILE, errors="replace") as f:
+            f.seek(log_offset)
+            tail = f.read().strip()
+    except Exception:
+        pass
+    if "self-update finished" in tail:
+        # Finished without restarting us — unexpected, but not a failure to report.
+        logger.warning("self-update finished but agent was not restarted")
+        return
+    if tail:
+        msg = tail.replace("\n", " | ")[-300:]
+    elif seen_running:
+        msg = "no output logged"
+    else:
+        msg = "self-update unit never started (systemd-run/sudo failed?)"
+    logger.warning("self-update aborted before restart: %s", msg)
+    _report_command("update_agent_failure", False, f"Self-update aborted before agent restart: {msg}")
+    _clear_update_marker()
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +447,11 @@ def _cmd_reboot(cmd: dict, command_id: str | None) -> bool:
             runtime.agent._post_heartbeat()
         except Exception as exc:
             logger.warning("reboot: final tab snapshot failed: %s", exc)
+        # Freeze state reporting so a routine heartbeat firing during the
+        # shutdown window (Chromium already dead, tabs=[]) can't overwrite the
+        # snapshot we just saved for the post-reboot resume. Self-re-enables in
+        # case the reboot never actually happens.
+        runtime.agent._suspend_state_reporting()
     _report_command("reboot", True, command_id=command_id)
     subprocess.run(["sudo", "reboot"], check=False)
     return False
@@ -417,12 +484,19 @@ def _cmd_update_agent(cmd: dict, command_id: str | None) -> bool:
         logger.warning("update_agent: could not write update-state marker: %s", exc)
     # Launch detached — self-update re-execs into its own systemd unit so the
     # kio-agent restart at the end of the update can't kill it mid-flight.
+    try:
+        log_offset = os.path.getsize(UPDATE_LOG_FILE)
+    except OSError:
+        log_offset = 0
     subprocess.Popen(
         ["sudo", "/opt/kio-agent/self-update"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    # If the update aborts before restarting this agent, no boot-time report will
+    # ever fire — watch the transient unit and report the failure ourselves.
+    threading.Thread(target=_watch_self_update, args=(log_offset,), daemon=True).start()
     _report_command("update_agent_attempt", True, f"Update started (ref {ref})", command_id=command_id)
     return False
 

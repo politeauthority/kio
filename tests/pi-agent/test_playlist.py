@@ -34,6 +34,13 @@ def test_ordered_tabs_appends_unknown_urls_at_end():
     assert ordered == ["a", "u"]  # known first, unknown keeps trailing position
 
 
+def test_tab_cycler_state_includes_tab_order():
+    cycler = TabCycler(90, tab_order=["https://a.example", "https://b.example"])
+    state = cycler.current_state()
+    assert state["interval_seconds"] == 90
+    assert state["tab_order"] == ["https://a.example", "https://b.example"]
+
+
 def test_tab_cycler_filters_non_string_order_entries():
     cycler = TabCycler(10, tab_order=["http://a", None, 5, "http://b"])
     assert cycler._tab_order == ["http://a", "http://b"]
