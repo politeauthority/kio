@@ -112,12 +112,18 @@ async def heartbeat(
         kiosk.agent_version = payload.agent_version
     if payload.reporting_api_url is not None:
         kiosk.reporting_api_url = payload.reporting_api_url
+    # Resume state (tabs / playlist / cycle) updates only when the agent actually
+    # sent the field. Agents omit all three on pre-resume boot heartbeats and on
+    # the final offline heartbeat, precisely so those can't overwrite the state
+    # GET /agent/state hands back after the restart. When the field IS sent, an
+    # explicit None (or []) still clears — that's how stopping playback reads.
+    sent = payload.model_fields_set
     if payload.browser_tabs is not None:
         kiosk.browser_tabs = payload.browser_tabs
-    # Always update playlist_state (None clears it when playback stops)
-    kiosk.playlist_state = payload.playlist_state
-    # Always update tab_cycle_state (None clears it when cycling stops)
-    kiosk.tab_cycle_state = payload.tab_cycle_state
+    if "playlist_state" in sent:
+        kiosk.playlist_state = payload.playlist_state
+    if "tab_cycle_state" in sent:
+        kiosk.tab_cycle_state = payload.tab_cycle_state
 
     await session.commit()
 
@@ -397,9 +403,11 @@ async def get_state(
     - `tabs`: the web pages the node had open, so the agent can reopen them when
       no playlist is playing. The CDP target id is dropped (it doesn't survive a
       restart); only the url and which tab was focused matter for restore.
+    - `tab_cycle`: interval + tab order when tab cycling was running, so the
+      agent restarts the cycler after restoring the tabs it rotates over.
 
-    The agent calls this once on startup, before the first heartbeat clears the
-    stored state.
+    The agent calls this once on startup, before its heartbeats resume carrying
+    (and thus overwriting) the stored state.
     """
     tabs = [
         {"url": t["url"], "active": bool(t.get("active"))}
@@ -427,4 +435,13 @@ async def get_state(
                 "last_idx": kiosk.playlist_state.get("idx", 0),
             }
 
-    return {"playlist": playlist, "tabs": tabs}
+    tab_cycle = None
+    if isinstance(kiosk.tab_cycle_state, dict) and kiosk.tab_cycle_state:
+        tab_cycle = {
+            "interval_seconds": int(kiosk.tab_cycle_state.get("interval_seconds") or 15),
+            "tab_order": [
+                u for u in (kiosk.tab_cycle_state.get("tab_order") or []) if isinstance(u, str)
+            ],
+        }
+
+    return {"playlist": playlist, "tabs": tabs, "tab_cycle": tab_cycle}

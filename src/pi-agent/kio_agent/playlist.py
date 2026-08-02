@@ -328,6 +328,9 @@ class TabCycler:
     def current_state(self) -> dict:
         return {
             "interval_seconds": self._interval,
+            # Saved so a boot-time resume can restart cycling with the operator's
+            # tab order, not just the interval.
+            "tab_order": list(self._tab_order),
             "current_tab_id": self._current_tab_id,
             "started_at": datetime.fromtimestamp(self._started_at, tz=timezone.utc).isoformat(),
         }

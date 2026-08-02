@@ -100,6 +100,82 @@ async def test_heartbeat_came_back_online_logs_event(agent_client):
     assert "online" in log.command
 
 
+async def test_heartbeat_omitted_state_fields_preserved(agent_client):
+    """A heartbeat that omits tabs/playlist/cycle state must not clear it.
+
+    Agents omit these fields on pre-resume boot heartbeats and on the final
+    offline heartbeat so the saved state survives for GET /agent/state.
+    """
+    client, kiosk, session = agent_client
+    kiosk.browser_tabs = [{"url": "https://a.example", "active": True}]
+    kiosk.playlist_state = {"idx": 2, "total": 5}
+    kiosk.tab_cycle_state = {"interval_seconds": 90, "tab_order": ["https://a.example"]}
+
+    r = await client.post("/agent/heartbeat", json={"online": True})
+
+    assert r.status_code == 204
+    assert kiosk.browser_tabs == [{"url": "https://a.example", "active": True}]
+    assert kiosk.playlist_state == {"idx": 2, "total": 5}
+    assert kiosk.tab_cycle_state == {"interval_seconds": 90, "tab_order": ["https://a.example"]}
+
+
+async def test_heartbeat_explicit_none_clears_state(agent_client):
+    """Explicitly-sent nulls still clear — that's how stopping playback reads."""
+    client, kiosk, session = agent_client
+    kiosk.playlist_state = {"idx": 2}
+    kiosk.tab_cycle_state = {"interval_seconds": 90}
+
+    r = await client.post(
+        "/agent/heartbeat",
+        json={"online": True, "playlist_state": None, "tab_cycle_state": None},
+    )
+
+    assert r.status_code == 204
+    assert kiosk.playlist_state is None
+    assert kiosk.tab_cycle_state is None
+
+
+# ---------------------------------------------------------------------------
+# GET /agent/state
+# ---------------------------------------------------------------------------
+
+
+async def test_get_state_returns_tabs_and_tab_cycle(agent_client):
+    client, kiosk, _ = agent_client
+    kiosk.browser_tabs = [
+        {"url": "https://a.example", "active": False, "id": "T1"},
+        {"url": "https://b.example", "active": True, "id": "T2"},
+        {"url": "about:blank", "active": False, "id": "T3"},
+    ]
+    kiosk.tab_cycle_state = {
+        "interval_seconds": 90,
+        "tab_order": ["https://b.example", "https://a.example"],
+        "current_tab_id": "T2",
+    }
+
+    r = await client.get("/agent/state")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tabs"] == [
+        {"url": "https://a.example", "active": False},
+        {"url": "https://b.example", "active": True},
+    ]
+    assert body["tab_cycle"] == {
+        "interval_seconds": 90,
+        "tab_order": ["https://b.example", "https://a.example"],
+    }
+
+
+async def test_get_state_no_saved_state(agent_client):
+    client, kiosk, _ = agent_client
+
+    r = await client.get("/agent/state")
+
+    assert r.status_code == 200
+    assert r.json() == {"playlist": None, "tabs": [], "tab_cycle": None}
+
+
 # ---------------------------------------------------------------------------
 # GET /agent/config
 # ---------------------------------------------------------------------------
