@@ -4,6 +4,9 @@ metadata:
   name: kio-api
 spec:
   replicas: 1
+  # Keep only two retired ReplicaSets per rollout history (default is 10) —
+  # enough for a rollback, without a long tail of empty RSs in ArgoCD's tree.
+  revisionHistoryLimit: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
