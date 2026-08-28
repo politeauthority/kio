@@ -247,6 +247,6 @@ Harbor pull credentials live in the `harbor-registry` image-pull secret;
 | `task test:api:docker` | Build the `test` image and run the unit suite inside it |
 | `task test:api` | Run the unit suite on the host via `uv` |
 | `task dev:migrate` | Run Alembic migrations against the dev compose stack |
-| `task stg-teardown` | Scale the staging app to zero (namespace, secrets, RBAC stay) |
+| `task stg-teardown` | Tear staging down (Deployments + Job; namespace and secrets stay) |
 
 See `task --list` for the full set.

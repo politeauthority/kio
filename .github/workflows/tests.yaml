@@ -8,7 +8,7 @@ name: Tests
 # it pins a full homeassistant install.
 #
 # Environment-dependent e2e tests (task test:e2e:*) are intentionally excluded —
-# they need a live deployment (see stg.yaml, opt-in via the `stg-env` label).
+# they need a live deployment (staging is deployed by hand: docs/dev/staging.md).
 
 on:
   pull_request:

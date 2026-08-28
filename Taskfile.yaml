@@ -35,12 +35,12 @@ tasks:
   # private-ops, and ArgoCD rolls it out (migrate PreSync hook → deployments).
 
   apply-stg:
-    desc: Apply kio-stg k8s manifests (namespace, secrets and CI RBAC are GitOps-owned in private-ops kio/stg)
+    desc: Apply kio-stg k8s manifests (incl. the namespace-scoped SealedSecrets)
     cmds:
       - kubectl apply -k kubernetes-manifests/envs/stg/
 
   stg-deploy:
-    desc: "CI: deploy an image tag to the shared kio-stg namespace and gate on migrations + rollout (usage: task stg-deploy TAG=stg-pr-12)"
+    desc: "Deploy an image tag to kio-stg and gate on migrations + rollout (usage: task stg-deploy TAG=stg-feat-my-feature)"
     vars:
       TAG: '{{.TAG | default "stg-main"}}'
       NS: kio-stg
@@ -48,7 +48,7 @@ tasks:
       - |
         set -euo pipefail
         echo "Deploying {{.IMAGE}}:{{.TAG}} / {{.IMAGE_UI}}:{{.TAG}} to {{.NS}}"
-        # Stamp the tag in place (CI checkout; on a laptop this dirties the overlay — intended).
+        # Stamps the tag in place — don't commit that change; the committed tag is stg-main.
         (cd kubernetes-manifests/envs/stg && kustomize edit set image {{.IMAGE}}:{{.TAG}} {{.IMAGE_UI}}:{{.TAG}})
         # Jobs are immutable: drop the previous migrate Job so the new image can run it.
         kubectl -n {{.NS}} delete job kio-migrate --ignore-not-found
@@ -63,10 +63,11 @@ tasks:
         echo "kio-stg is running {{.TAG}}"
 
   stg-teardown:
-    desc: Scale the kio-stg app to zero (namespace, secrets and RBAC stay — GitOps-owned)
+    desc: Tear staging down — delete the kio-stg Deployments and migrate Job (namespace + secrets stay)
     cmds:
       - kubectl -n kio-stg delete deployment kio-api kio-ui --ignore-not-found
       - kubectl -n kio-stg delete job kio-migrate --ignore-not-found
+      - 'echo "kio-stg torn down. Bring it back with task release-stg BRANCH=<branch>"'
 
   # Non-prod builds (dev / stg) are tagged twice: a rolling tag the kustomize overlays
   # point at (dev-latest / stg-<branch>) plus an immutable per-build tag suffixed with the
