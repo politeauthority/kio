@@ -35,10 +35,38 @@ tasks:
   # private-ops, and ArgoCD rolls it out (migrate PreSync hook → deployments).
 
   apply-stg:
-    desc: Apply kio-stg k8s manifests (copies harbor-registry pull secret from kio-dev if absent)
+    desc: Apply kio-stg k8s manifests (namespace, secrets and CI RBAC are GitOps-owned in private-ops kio/stg)
     cmds:
-      - kubectl get secret harbor-registry -n kio-stg --ignore-not-found | grep -q harbor-registry || kubectl get secret harbor-registry -n kio-dev -o json | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.metadata.namespace)' | kubectl apply -n kio-stg -f -
       - kubectl apply -k kubernetes-manifests/envs/stg/
+
+  stg-deploy:
+    desc: "CI: deploy an image tag to the shared kio-stg namespace and gate on migrations + rollout (usage: task stg-deploy TAG=stg-pr-12)"
+    vars:
+      TAG: '{{.TAG | default "stg-main"}}'
+      NS: kio-stg
+    cmds:
+      - |
+        set -euo pipefail
+        echo "Deploying {{.IMAGE}}:{{.TAG}} / {{.IMAGE_UI}}:{{.TAG}} to {{.NS}}"
+        # Stamp the tag in place (CI checkout; on a laptop this dirties the overlay — intended).
+        (cd kubernetes-manifests/envs/stg && kustomize edit set image {{.IMAGE}}:{{.TAG}} {{.IMAGE_UI}}:{{.TAG}})
+        # Jobs are immutable: drop the previous migrate Job so the new image can run it.
+        kubectl -n {{.NS}} delete job kio-migrate --ignore-not-found
+        kubectl apply -k kubernetes-manifests/envs/stg/
+        echo "Waiting for migrations..."
+        kubectl -n {{.NS}} wait --for=condition=complete --timeout=240s job/kio-migrate || true
+        kubectl -n {{.NS}} logs job/kio-migrate --tail=50 || true
+        # Hard gate: a failed migration must fail the deploy, not just log.
+        kubectl -n {{.NS}} get job kio-migrate -o jsonpath='{.status.succeeded}' | grep -q 1
+        kubectl -n {{.NS}} rollout status deployment/kio-api --timeout=300s
+        kubectl -n {{.NS}} rollout status deployment/kio-ui  --timeout=300s
+        echo "kio-stg is running {{.TAG}}"
+
+  stg-teardown:
+    desc: Scale the kio-stg app to zero (namespace, secrets and RBAC stay — GitOps-owned)
+    cmds:
+      - kubectl -n kio-stg delete deployment kio-api kio-ui --ignore-not-found
+      - kubectl -n kio-stg delete job kio-migrate --ignore-not-found
 
   # Non-prod builds (dev / stg) are tagged twice: a rolling tag the kustomize overlays
   # point at (dev-latest / stg-<branch>) plus an immutable per-build tag suffixed with the
@@ -136,7 +164,8 @@ tasks:
     dir: tests/e2e
     cmds:
       - uv sync
-      - uv run playwright install chromium
+      # --with-deps installs Chromium's system libraries too (needs sudo on Linux; no-op on macOS).
+      - uv run playwright install --with-deps chromium
 
   bump:build:
     desc: Increment the monotonic build number (BUILD file). Run once per release.
@@ -609,11 +638,6 @@ tasks:
       - kubectl rollout restart deployment/kio-ui -n kio-stg
       - kubectl rollout status deployment/kio-api -n kio-stg --timeout=120s
       - kubectl rollout status deployment/kio-ui -n kio-stg --timeout=120s
-
-  teardown-stg:
-    desc: Delete the kio-api and kio-ui deployments from kio-stg
-    cmds:
-      - kubectl delete deployment kio-api kio-ui -n kio-stg --ignore-not-found
 
   stamp-prd:
     desc: Write the current version into the private-ops prd overlay (image tags + base ref)
