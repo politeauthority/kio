@@ -1,3 +1,6 @@
+# Shared staging namespace. Secrets, the CI ServiceAccount and the namespace itself
+# are GitOps-owned in private-ops (kio/stg); this overlay is what CI applies per PR
+# via `task stg-deploy TAG=stg-pr-<N>` (stg.yaml, opt-in `stg-env` label).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kio-stg
@@ -9,7 +12,6 @@ images:
 resources:
 - ../../base
 - ./ingressroute.yaml
-- ./secrets/sealed-api-secrets.yaml
 
 patches:
 - path: api-configmap-patch.yaml

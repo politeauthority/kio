@@ -1,16 +1,21 @@
 name: STG
 
-# Per-PR staging pipeline — OPT-IN: add the `stg-env` label to a pull request.
-# Run unit tests, build + push a staging image tagged for the PR, let ArgoCD's
-# ApplicationSet (PR generator, in private-ops) spin up an ephemeral `kio-stg-pr-<N>`
-# namespace from it, run regression e2e against that env, then gate on a manual
-# `staging` environment approval. Closing the PR removes the ApplicationSet entry →
-# the namespace is pruned.
+# 🧪 Staging pipeline — OPT-IN: add the `stg-env` label to a pull request.
 #
-# Opt-in because the ephemeral-env infra (ApplicationSet, per-PR DB + secrets, a
-# kubeconfig for the regression job) is not fully provisioned yet — see
-# docs/dev/cicd-rollout.md "Phase 2". Until it is, an unlabeled PR must not go red
-# for it. Re-runs on new commits while the label is present.
+# Builds the PR's images (API `test` target + UI with the branch banner), deploys
+# them to the SHARED `kio-stg` namespace, runs the e2e regression suite (API + UI)
+# against it, then waits on a manual `staging` environment approval. The namespace
+# itself, its secrets (dedicated `kio_stg` database) and the CI ServiceAccount are
+# GitOps-owned in private-ops (kio/stg); this workflow only rolls the app.
+#
+# One PR at a time: the namespace is shared, so runs are serialized by a repo-wide
+# concurrency group (never cancelled mid-deploy). The last deployed PR stays up for
+# manual poking until the next labeled PR replaces it (`task stg-teardown` to clear).
+#
+# Runs on the in-cluster `kio` ARC runner: it reaches the app via the in-cluster
+# Services, and the kubeconfig (secret STG_KUBECONFIG, from scripts/stg-kubeconfig.sh)
+# targets the in-cluster API server. Secrets: HARBOR_PASSWORD, STG_KUBECONFIG,
+# STG_USERNAME / STG_PASSWORD (the DEV_* login baked into kio-stg's kio-api secret).
 
 on:
   pull_request:
@@ -18,24 +23,21 @@ on:
     types: [labeled, synchronize, reopened]
 
 concurrency:
-  group: stg-pr-${{ github.event.number }}
-  cancel-in-progress: true
+  group: stg-shared-namespace
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  pull-requests: write  # post the ephemeral env / regression status back to the PR
 
 jobs:
-  test-build:
+  build:
+    name: Build staging images
     if: contains(github.event.pull_request.labels.*.name, 'stg-env')
     runs-on: kio
     env:
-      # Registry/org for image build+push (Taskfile defaults to a placeholder
-      # and otherwise reads a local .env that does not exist in CI).
       HARBOR: harbor.squid-ink.us/politeauthority
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
-      namespace: ${{ steps.meta.outputs.namespace }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,17 +48,9 @@ jobs:
           curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
-      - name: Unit tests
-        id: unit
-        run: |
-          set -o pipefail
-          task test:api:docker 2>&1 | tee /tmp/unit.txt
-
-      - name: Compute PR tag + namespace
+      - name: Compute PR tag
         id: meta
-        run: |
-          echo "tag=stg-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
-          echo "namespace=kio-stg-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=stg-pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Harbor
         uses: docker/login-action@v3
@@ -65,10 +59,10 @@ jobs:
           username: robot$ci
           password: ${{ secrets.HARBOR_PASSWORD }}
 
-      - name: Build & push staging images (test target)
+      - name: Build & push staging images
         run: |
           set -euo pipefail
-          # BRANCH=pr-<N> → image tag stg-pr-<N> (the tag the ApplicationSet deploys).
+          # BRANCH=pr-<N> → image tag stg-pr-<N>.
           task build-stg    BRANCH=pr-${{ github.event.number }}
           task push-stg     BRANCH=pr-${{ github.event.number }}
           task build-ui-stg BRANCH=pr-${{ github.event.number }}
@@ -77,33 +71,30 @@ jobs:
       - name: 📋 Build summary
         if: always()
         run: |
-          UNIT=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/unit.txt 2>/dev/null | tail -1 || true)
           TAG="stg-pr-${{ github.event.number }}"
           {
             echo "# 🧪 kio STG · PR #${{ github.event.number }}"
             echo ""
-            echo "🧪 Unit tests: \`${UNIT:-see logs}\`"
-            echo ""
             if [ "${{ job.status }}" = "success" ]; then
-              echo "## ✅ Staging images built & pushed"
+              echo "## ✅ Staging images built & pushed — \`kio-api:${TAG}\` · \`kio-ui:${TAG}\`"
               echo ""
-              echo "| 🏷️ Tag | 🐳 Images | 🧭 Ephemeral env |"
-              echo "| --- | --- | --- |"
-              echo "| \`${TAG}\` | \`kio-api:${TAG}\` · \`kio-ui:${TAG}\` | \`kio-stg-pr-${{ github.event.number }}\` |"
-              echo ""
-              echo "🔄 ArgoCD's PR ApplicationSet deploys these tags; 🔁 regression runs next."
+              echo "🚀 Deploying to the shared \`kio-stg\` namespace next, then 🔁 regression."
             else
-              echo "## ❌ Build / unit tests failed — see logs above."
+              echo "## ❌ Image build failed — see logs above."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  regression:
-    needs: test-build
+  deploy-regression:
+    name: Deploy to kio-stg + regression
+    needs: build
     runs-on: kio
+    env:
+      HARBOR: harbor.squid-ink.us/politeauthority
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
 
-      - name: Install toolchain (task, kubectl)
+      - name: Install toolchain (task, kubectl, kustomize)
         run: |
           set -euo pipefail
           mkdir -p "$HOME/bin"
@@ -111,71 +102,68 @@ jobs:
           KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
           curl -fsSL -o "$HOME/bin/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           chmod +x "$HOME/bin/kubectl"
+          curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- "$HOME/bin"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
-      # TODO(infra, Phase 2): a kubeconfig scoped to the kio-stg-pr-* namespaces
-      # (secrets.STG_KUBECONFIG) — without it the wait below cannot reach the cluster.
-      - name: Configure kubeconfig
+      - name: Configure kubeconfig (kio-stg-ci ServiceAccount)
         run: |
           set -euo pipefail
           if [ -z "${{ secrets.STG_KUBECONFIG }}" ]; then
-            echo "::error::secrets.STG_KUBECONFIG is not set — the ephemeral-env infra is not provisioned yet (docs/dev/cicd-rollout.md, Phase 2)."
+            echo "::error::secrets.STG_KUBECONFIG is not set — generate it with scripts/stg-kubeconfig.sh (needs private-ops kio/stg synced)."
             exit 1
           fi
           mkdir -p ~/.kube
           echo "${{ secrets.STG_KUBECONFIG }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
+          kubectl auth whoami || kubectl -n kio-stg get serviceaccount kio-stg-ci
 
-      # The ArgoCD ApplicationSet PR generator (private-ops/kio/kio-stg-appset.yaml)
-      # deploys ${{ needs.test-build.outputs.namespace }} from this PR's image tag.
-      - name: Wait for ephemeral env to be ready
-        run: |
-          set -euo pipefail
-          NS="${{ needs.test-build.outputs.namespace }}"
-          kubectl rollout status deployment/kio-api -n "$NS" --timeout=300s
-          kubectl rollout status deployment/kio-ui  -n "$NS" --timeout=300s
+      - name: Deploy to kio-stg (migrate → rollout)
+        run: task stg-deploy TAG=${{ needs.build.outputs.tag }}
 
-      - name: Regression (e2e API + UI) against the ephemeral env
+      - name: Regression (e2e API + UI) against kio-stg
         env:
-          # TODO(infra): point these at the per-PR ingress/route for the ephemeral env
-          # (e.g. https://stg-pr-<N>.kio.colfax.int). Until per-PR DNS/HTTPRoute exists,
-          # target the in-cluster Services from the runner.
-          KIO_API_URL: http://kio-api.${{ needs.test-build.outputs.namespace }}.svc:8000
-          KIO_UI_URL: http://kio-ui.${{ needs.test-build.outputs.namespace }}.svc:8080
+          # In-cluster Services: the runner is inside the cluster, so no ingress,
+          # DNS or private-CA handling is needed. The UI proxies /api to kio-api.
+          KIO_API_URL: http://kio-api.kio-stg.svc:8000
+          KIO_UI_URL: http://kio-ui.kio-stg.svc:8080
           KIO_USERNAME: ${{ secrets.STG_USERNAME }}
           KIO_PASSWORD: ${{ secrets.STG_PASSWORD }}
         run: |
           set -euo pipefail
+          [ -n "$KIO_USERNAME" ] && [ -n "$KIO_PASSWORD" ] || { echo "::error::secrets.STG_USERNAME / STG_PASSWORD are not set."; exit 1; }
           task test:e2e:install
-          task test:e2e:api
-          task test:e2e:ui
+          set -o pipefail
+          task test:e2e:api 2>&1 | tee /tmp/e2e-api.txt
+          task test:e2e:ui  2>&1 | tee /tmp/e2e-ui.txt
 
       - name: 📋 Regression summary
         if: always()
         run: |
-          NS="${{ needs.test-build.outputs.namespace }}"
+          API=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/e2e-api.txt 2>/dev/null | tail -1 || true)
+          UI=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/e2e-ui.txt 2>/dev/null | tail -1 || true)
           {
             if [ "${{ job.status }}" = "success" ]; then
-              echo "## ✅ 🔁 Regression passed — PR #${{ github.event.number }}"
-              echo ""
-              echo "🌐 e2e (API + UI) green against \`${NS}\`."
+              echo "## ✅ 🔁 Regression passed — PR #${{ github.event.number }} is live on \`kio-stg\` (\`${{ needs.build.outputs.tag }}\`)"
             else
-              echo "## ❌ 🔁 Regression failed — PR #${{ github.event.number }}"
-              echo ""
-              echo "🔎 Ephemeral env \`${NS}\` — check rollout / e2e logs above."
+              echo "## ❌ 🔁 Deploy or regression failed — PR #${{ github.event.number }}"
             fi
+            echo ""
+            echo "| Suite | Result |"
+            echo "| --- | --- |"
+            echo "| 🌐 e2e API | \`${API:-see logs}\` |"
+            echo "| 🖥️ e2e UI (Playwright) | \`${UI:-see logs}\` |"
+            echo ""
+            echo "🔗 https://stg.kio.colfax.int · https://api.stg.kio.colfax.int (LAN)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   promote:
-    needs: regression
-    runs-on: kio
-    # Manual gate: this job only runs after a reviewer approves the `staging`
-    # environment in the PR (Settings → Environments → staging → required reviewers).
-    # Approve = promote/merge-ready; reject (or leave unapproved) = deny.
+    name: Staging approval
+    needs: deploy-regression
+    runs-on: ubuntu-latest
+    # Manual gate: runs only after a reviewer approves the `staging` environment
+    # (Settings → Environments → staging → required reviewers).
     environment:
       name: staging
     steps:
       - name: Approved
-        run: |
-          echo "Staging approved for PR #${{ github.event.number }}."
-          echo "## 🎉 ✅ Staging approved — PR #${{ github.event.number }} is promote / merge-ready" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "## 🎉 ✅ Staging approved — PR #${{ github.event.number }} is merge-ready" >> "$GITHUB_STEP_SUMMARY"
