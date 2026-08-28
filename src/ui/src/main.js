@@ -26,7 +26,7 @@ import SettingsBrowserFlags from './settings/SettingsBrowserFlags.vue'
 import SettingsDefaultPage from './settings/SettingsDefaultPage.vue'
 import SettingsCertificates from './settings/SettingsCertificates.vue'
 import EventLog from './EventLog.vue'
-import { isAuthenticated, login, AUTH_ENABLED } from './auth'
+import { isAuthenticated, loadAuthConfig, loginRoute } from './auth'
 
 
 const router = createRouter({
@@ -61,16 +61,15 @@ const router = createRouter({
 router.beforeEach(async to => {
   if (to.meta.public) return true
   if (await isAuthenticated()) return true
-  if (AUTH_ENABLED) {
-    await login()
-    return false
-  }
-  return { path: '/login' }
+  return loginRoute(to.fullPath)
 })
 
 router.afterEach(to => {
   document.title = to.meta.title ? `kio — ${to.meta.title}` : 'kio'
 })
+
+// Auth config must be known before the first route guard runs.
+await loadAuthConfig()
 
 const app = createApp(App)
 app.use(createPinia())

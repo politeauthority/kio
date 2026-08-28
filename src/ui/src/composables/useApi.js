@@ -1,5 +1,5 @@
 import { API_URL } from '../config'
-import { getAccessToken, login, AUTH_ENABLED } from '../auth'
+import { getAccessToken, clearSession, isAuthDisabled } from '../auth'
 
 export function useApi() {
   async function apiFetch(path, options = {}) {
@@ -13,11 +13,15 @@ export function useApi() {
       ...rest,
     })
 
-    if (res.status === 401) {
-      if (AUTH_ENABLED) {
-        await login()
-      } else if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+    if (res.status === 401 && !isAuthDisabled()) {
+      // Session is gone (expired, revoked, or the server's auth config changed).
+      // Drop local credentials and send the user through the login page, which
+      // will bring them back here afterwards.
+      await clearSession()
+      if (window.location.pathname !== '/login') {
+        const returnTo = window.location.pathname + window.location.search
+        const q = returnTo !== '/' ? `?returnTo=${encodeURIComponent(returnTo)}` : ''
+        window.location.href = `/login${q}`
       }
       return
     }

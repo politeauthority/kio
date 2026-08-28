@@ -23,8 +23,14 @@ class Settings(BaseSettings):
     # Set to true to disable all dashboard auth (local dev only).
     auth_disabled: bool = False
     # Authentik OIDC issuer URL, e.g. https://auth.example.com/application/o/kio/
-    # If set, Bearer JWTs issued by Authentik are accepted on dashboard routes.
+    # If set, Bearer JWTs issued by Authentik are accepted on dashboard routes and
+    # the UI (which reads GET /auth/config) will offer "Sign in with Authentik".
     authentik_issuer: str = ""
+    # OAuth2 client ID of the kio application in Authentik. Advertised to the UI
+    # for the PKCE flow and, when set, enforced as the JWT `aud` claim.
+    authentik_client_id: str = ""
+    # Label shown on the login button, e.g. "Sign in with <name>".
+    authentik_display_name: str = "Authentik"
     # Static credentials for local dev (no Authentik). POST /auth/login to get a token.
     dev_username: str = ""
     dev_password: str = ""

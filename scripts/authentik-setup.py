@@ -8,9 +8,19 @@ Usage:
 Get your API token: Authentik admin UI → Admin Interface → Directory → Tokens
 Create one with intent "API" for your admin user.
 
-After running, paste the printed client ID into:
-  kubernetes-manifests/envs/prd/auth-patch.yaml  (OIDC_CLIENT_ID value)
-Then re-apply: kubectl apply -k kubernetes-manifests/envs/prd/
+Environment:
+    AUTHENTIK_URL      Base URL of Authentik (default https://auth.example.com)
+    KIO_REDIRECT_URIS  Comma-separated allowed redirect URIs, one per kio
+                       environment, e.g.
+                       https://kio.example.com/callback,https://stg.kio.example.com/callback
+                       (default http://kio.example.local/callback)
+
+After running, set the printed AUTHENTIK_ISSUER / AUTHENTIK_CLIENT_ID on the
+kio API (kubernetes-manifests/envs/<env>/api-configmap-patch.yaml) and
+re-apply: kubectl apply -k kubernetes-manifests/envs/<env>/
+
+Re-running is safe: an existing provider has its redirect URIs and scopes
+brought up to date; nothing else is changed.
 """
 
 import argparse
@@ -24,8 +34,16 @@ import urllib.request
 AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "https://auth.example.com")
 APP_SLUG = "kio"
 APP_NAME = "kio Kiosk Manager"
-REDIRECT_URI = os.environ.get("KIO_REDIRECT_URI", "http://kio.example.local/callback")
-SCOPES = ["openid", "profile", "email"]
+REDIRECT_URIS = [
+    u.strip()
+    for u in os.environ.get(
+        "KIO_REDIRECT_URIS", os.environ.get("KIO_REDIRECT_URI", "http://kio.example.local/callback")
+    ).split(",")
+    if u.strip()
+]
+# offline_access lets the UI obtain a refresh token so sessions renew silently
+# instead of redirecting through Authentik every time the access token expires.
+SCOPES = ["openid", "profile", "email", "offline_access"]
 
 
 def api(token, method, path, body=None, params=None):
@@ -51,11 +69,7 @@ def api(token, method, path, body=None, params=None):
 
 
 def _find_scope_pks(token):
-    managed_prefixes = [
-        "goauthentik.io/providers/oauth2/scope-openid",
-        "goauthentik.io/providers/oauth2/scope-profile",
-        "goauthentik.io/providers/oauth2/scope-email",
-    ]
+    managed_prefixes = [f"goauthentik.io/providers/oauth2/scope-{scope}" for scope in SCOPES]
     try:
         r = api(token, "GET", "/propertymappings/all/")
         pks = [
@@ -74,14 +88,18 @@ def find_or_create_provider(token):
     hits = _results(result)
     if hits:
         p = hits[0]
-        print(f"  Provider already exists (pk={p['pk']})")
-        return p
+        print(f"  Provider already exists (pk={p['pk']}) — syncing redirect URIs and scopes")
+        patch = {"redirect_uris": _redirect_uris()}
+        scope_pks = _find_scope_pks(token)
+        if scope_pks is not None:
+            patch["property_mappings"] = scope_pks
+        return api(token, "PATCH", f"/providers/oauth2/{p['pk']}/", patch)
 
     invalidation_flow = _get_default_invalidation_flow(token)
     body = {
         "name": APP_NAME,
         "client_type": "public",
-        "redirect_uris": [{"url": REDIRECT_URI, "matching_mode": "strict"}],
+        "redirect_uris": _redirect_uris(),
         "authorization_flow": _get_default_auth_flow(token),
         "access_token_validity": "hours=24",
     }
@@ -94,6 +112,10 @@ def find_or_create_provider(token):
     provider = api(token, "POST", "/providers/oauth2/", body)
     print(f"  Created provider (pk={provider['pk']})")
     return provider
+
+
+def _redirect_uris():
+    return [{"url": uri, "matching_mode": "strict"} for uri in REDIRECT_URIS]
 
 
 def _results(r):
@@ -156,7 +178,8 @@ def main():
     print("Setting up Authentik for kio...")
     print(f"  Authentik: {AUTHENTIK_URL}")
     print(f"  App slug:  {APP_SLUG}")
-    print(f"  Redirect:  {REDIRECT_URI}")
+    for uri in REDIRECT_URIS:
+        print(f"  Redirect:  {uri}")
     print()
 
     print("1. Finding/creating OIDC provider...")
@@ -170,14 +193,17 @@ def main():
 
     print()
     print("=" * 60)
-    print("Authentik setup complete. Add these values to k8s:")
+    print("Authentik setup complete. Set these on the kio API:")
     print()
-    print(f"  OIDC_AUTHORITY  = {issuer}")
-    print(f"  OIDC_CLIENT_ID  = {client_id}")
+    print(f"  AUTHENTIK_ISSUER     = {issuer}")
+    print(f"  AUTHENTIK_CLIENT_ID  = {client_id}")
     print()
-    print("Edit kubernetes-manifests/envs/prd/auth-patch.yaml")
-    print("Set OIDC_CLIENT_ID value, then:")
-    print("  kubectl apply -k kubernetes-manifests/envs/prd/")
+    print("Edit kubernetes-manifests/envs/<env>/api-configmap-patch.yaml, then:")
+    print("  kubectl apply -k kubernetes-manifests/envs/<env>/")
+    print("  kubectl rollout restart deployment/kio-api -n <namespace>")
+    print()
+    print("Reminder: bind an Authentik policy/group to the application to")
+    print("control WHO may sign in — kio accepts any user Authentik lets through.")
     print("=" * 60)
 
 

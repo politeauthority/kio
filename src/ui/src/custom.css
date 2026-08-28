@@ -351,6 +351,16 @@ code {
   background: var(--bg-surface-hover);
 }
 
+.dropdown-user {
+  padding: 0.4rem var(--space-md);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  border-top: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .dropdown-version {
   padding: 0.4rem var(--space-md);
   color: var(--text-muted);
