@@ -14,10 +14,13 @@ import { handleCallback } from './auth'
 const router = useRouter()
 
 onMounted(async () => {
+  let dest = '/'
   try {
-    await handleCallback()
-  } finally {
-    router.replace('/')
+    dest = await handleCallback()
+  } catch (err) {
+    console.error('OIDC callback failed', err)
+    dest = { path: '/login', query: { error: 'callback' } }
   }
+  router.replace(dest)
 })
 </script>

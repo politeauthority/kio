@@ -69,6 +69,7 @@
               <div v-if="menuOpen" class="topbar-dropdown">
                 <RouterLink to="/settings" @click="menuOpen = false">Settings</RouterLink>
                 <RouterLink to="/about" @click="menuOpen = false">About</RouterLink>
+                <div v-if="userName" class="dropdown-user" :title="userName">{{ userName }}</div>
                 <button v-if="authActive" class="dropdown-logout" @click="handleLogout">Sign out</button>
                 <div v-if="version" class="dropdown-version">{{ version }}</div>
               </div>
@@ -106,7 +107,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useToastStore } from './stores/toast'
 import { useFeatureFlagsStore } from './stores/featureFlags'
 import { useApi } from './composables/useApi'
-import { logout, isAuthenticated, AUTH_ENABLED } from './auth'
+import { logout, isAuthDisabled, currentUserName } from './auth'
 import { KIO_BRANCH, IS_LOCAL } from './config'
 
 const kioBranch = KIO_BRANCH
@@ -122,6 +123,7 @@ const isUrlsActive = computed(() => route.path.startsWith('/urls'))
 const { apiFetch } = useApi()
 const version = ref(null)
 const authActive = ref(false)
+const userName = ref(null)
 const collapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
 const menuOpen = ref(false)
 
@@ -135,7 +137,8 @@ function handleOutsideClick(e) {
 
 onMounted(async () => {
   if (route.meta.public) return
-  authActive.value = AUTH_ENABLED || await isAuthenticated()
+  authActive.value = !isAuthDisabled()
+  if (authActive.value) userName.value = await currentUserName()
   try {
     const data = await apiFetch('/_version')
     version.value = data.version
@@ -150,7 +153,7 @@ onUnmounted(() => {
 
 async function handleLogout() {
   menuOpen.value = false
-  await logout()
-  if (!AUTH_ENABLED) router.push('/login')
+  const redirected = await logout()
+  if (!redirected) router.push('/login')
 }
 </script>
