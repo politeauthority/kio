@@ -185,7 +185,7 @@ export async function currentUserName() {
   return null
 }
 
-/** Drop local credentials. Returns true if a redirect to the IdP was started. */
+/** Drop local credentials (dev token and any cached OIDC user). Never redirects. */
 export async function clearSession() {
   devLogout()
   const mgr = getManager()
