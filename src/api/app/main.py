@@ -11,7 +11,21 @@ from fastapi.responses import FileResponse
 from app.auth import refresh_jwks, require_dashboard_auth
 from app.config import settings
 from app.mqtt import start_mqtt, stop_mqtt
-from app.routers import agent, agent_settings, auth, certificates, event_logs, feature_flags, kiosks, managed_api_keys, node_settings, playlists, saved_urls, sse, tokens
+from app.routers import (
+    agent,
+    agent_settings,
+    auth,
+    certificates,
+    event_logs,
+    feature_flags,
+    kiosks,
+    managed_api_keys,
+    node_settings,
+    playlists,
+    saved_urls,
+    sse,
+    tokens,
+)
 from app.services.kiosk_service import mark_offline_kiosks, update_kiosk_from_heartbeat
 
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")

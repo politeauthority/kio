@@ -2,12 +2,15 @@
 
 How kio is built, packaged, and deployed today.
 
-> **Production is GitOps.** `.github/workflows/prd.yaml` (self-hosted `kio` ARC runner)
-> builds and pushes the release images, tags this repo, and stamps the version into the
-> private-ops repo's `kio/kio` overlay; **ArgoCD** deploys from there. The prod overlay is
-> not in this repo. Dev and staging are still driven from a developer machine through
-> [`task`](https://taskfile.dev) targets in the repo-root `Taskfile.yaml` (`kubectl` +
-> `kustomize` + `kubeseal`). Every CI step is a `task` target you can run locally.
+> **Production is release-please + GitOps.** `.github/workflows/release-please.yaml`
+> (self-hosted `kio` ARC runner) turns Conventional Commits on `main` into a version,
+> tag and GitHub Release, builds and pushes the release images, and stamps the version
+> into the private-ops repo's `kio/kio` overlay; **ArgoCD** deploys from there. The prod
+> overlay is not in this repo and no `bump:*` tasks exist — see
+> [releasing.md](releasing.md). Dev and staging are still driven from a developer machine
+> through [`task`](https://taskfile.dev) targets in the repo-root `Taskfile.yaml`
+> (`kubectl` + `kustomize` + `kubeseal`). Every CI step is a `task` target you can run
+> locally (`test`, `lint`, `ci-build-push`, `build:check`, `stamp-prd`).
 
 Related docs: [releasing.md](releasing.md) (prod/dev release mechanics & rollback),
 [staging.md](staging.md) (per-branch staging), [testing.md](testing.md) (unit + e2e tests).
@@ -36,8 +39,9 @@ few build flags differ.
                                                                          ▼  (wait, maxUnavailable=0)
 ```
 
-1. **Bump** — `bump:build` increments the `BUILD` number so the release is uniquely
-   identifiable (see [Versioning & build numbers](#versioning--build-numbers)).
+1. **Bump** — dev/stg: `bump:build` increments the `BUILD` number so the build is uniquely
+   identifiable (see [Versioning & build numbers](#versioning--build-numbers)). Prod: the
+   semver is bumped by release-please from the commit messages.
 2. **Build** — `docker buildx build --platform linux/amd64` against the repo root
    using `docker/Dockerfile.api` / `docker/Dockerfile.ui`. Each image is tagged twice:
    a rolling tag and an immutable `-build.N` tag.
@@ -90,7 +94,8 @@ in Harbor for rollback/audit while the overlay keeps pointing at the rolling tag
 identify what's running anywhere: `kubectl exec -n <ns> deploy/kio-api -- \
 python -c "import urllib.request,json;print(json.load(urllib.request.urlopen('http://127.0.0.1:8000/_version')))"`.
 
-`release-prd` commits the bumped `BUILD` (via `git-tag`) so prod build numbers persist;
+Build numbers are a dev/stg concept; prod images carry the clean release-please semver only.
+Staging bumps `BUILD` locally between releases;
 staging bumps it locally between releases. As a file counter it can drift if the same
 branch is built from multiple machines. See [releasing.md](releasing.md#build-numbers).
 
@@ -160,8 +165,8 @@ task test:e2e                                                 # live e2e from yo
 ### Production (versioned)
 
 ```bash
-task bump:patch       # or minor / major — updates VERSION
-task release-prd      # build → push → git tag → stamp private-ops (then push both repos)
+# no manual bump: release-please derives the version from Conventional Commits on main
+# prod: merge Conventional Commits to main — release-please does the rest (see releasing.md)
 git push origin main --tags
 ```
 
@@ -237,7 +242,7 @@ Harbor pull credentials live in the `harbor-registry` image-pull secret;
 | `task bump:build` | Increment the build number (release-* runs this automatically) |
 | `task release-dev` | Bump + build (`production`) + push + apply + rollout → `kio-dev` |
 | `task release-stg BRANCH=<b>` | Bump + build (`test`, incl. suite) + push + stamp + apply + rollout → `kio-stg` |
-| `task release-prd` | Build (`production`) + push + git tag + stamp private-ops overlay → ArgoCD → `kio` |
+| push to `main` | release-please: version + tag + Release → `ci-build-push` → stamp private-ops → ArgoCD → `kio` |
 | `task build-test:api` | Build the API `test` image locally (`$HARBOR/kio-api:test`) |
 | `task test:api:docker` | Build the `test` image and run the unit suite inside it |
 | `task test:api` | Run the unit suite on the host via `uv` |
