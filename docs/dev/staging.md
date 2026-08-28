@@ -1,69 +1,88 @@
 # Staging Environment
 
-The staging environment (`kio-stg`) is an isolated Kubernetes namespace for testing branches before they reach production. It shares the `kio_dev` PostgreSQL database and MQTT broker but uses separate deployments, its own MQTT topic prefix (`kio/stg`), and the domains `stg.kio.example.local` / `api.stg.kio.example.local`.
+`kio-stg` is a staging namespace you deploy **by hand** from a laptop with the Taskfile
+and tear down the same way. It is deliberately **not** GitOps-managed and has no CI
+pipeline: nothing deploys to it unless you run a task. It has its own PostgreSQL
+database (`kio_stg` in q-postgres, GitOps-owned in private-ops), the MQTT topic prefix
+`kio/stg`, and the LAN hosts `stg.kio.colfax.int` / `api.stg.kio.colfax.int` (private CA).
 
-## Deploying a branch
+## Deploy a branch
 
 ```bash
 task release-stg BRANCH=feat/my-feature
 ```
 
-This single command:
-1. Builds the API image (`stg-latest`) with `VERSION=<branch>`
-2. Pushes it to Harbor
-3. Builds the UI image (`stg-latest`) with `KIO_BRANCH=<branch>` baked in
-4. Pushes it to Harbor
-5. Applies the kustomize overlay (`kubernetes-manifests/envs/stg/`)
-6. Restarts both deployments and waits for rollout
+Builds the API image (`test` target — ships the unit suite) and the UI image (branch
+banner baked in) tagged `stg-feat-my-feature`, pushes them to Harbor, applies
+`kubernetes-manifests/envs/stg/`, and restarts/waits for both Deployments.
 
-## Branch banner
+```bash
+task stg-deploy TAG=stg-feat-my-feature   # (re)deploy an already-pushed tag with the migrate gate
+task stg-teardown                          # delete the Deployments + migrate Job; namespace and secrets stay
+```
 
-Whenever `KIO_BRANCH` is set in the UI image, a fixed amber bar appears at the top of every page showing the branch name. This is baked into the image at build time — it does not come from a k8s env var and cannot be overridden at runtime.
+`stg-deploy` is the stricter path: it deletes the previous (immutable) `kio-migrate` Job,
+applies, waits for the new Job to **succeed** before waiting for the rollout, so a failed
+migration stops the deploy instead of leaving a half-rolled namespace. It stamps the tag
+into `envs/stg/kustomization.yaml` in place — don't commit that; the committed tag is
+`stg-main`.
+
+## Running the e2e suite against it
+
+```bash
+task test:e2e:install          # once: uv sync + playwright chromium
+KIO_API_URL=https://api.stg.kio.colfax.int KIO_UI_URL=https://stg.kio.colfax.int \
+KIO_USERNAME=<DEV_USERNAME> KIO_PASSWORD=<DEV_PASSWORD> task test:e2e
+```
+
+(or put those in `tests/e2e/.env`). The credentials are the `DEV_USERNAME` /
+`DEV_PASSWORD` sealed into `envs/stg/secrets/sealed-api-secrets.yaml`.
 
 ## Individual task commands
 
 | Command | What it does |
 |---|---|
-| `task build-stg BRANCH=<branch>` | Build the API image tagged `stg-latest` |
-| `task push-stg` | Push the API image to Harbor |
-| `task build-ui-stg BRANCH=<branch>` | Build the UI image tagged `stg-latest` with the branch banner |
-| `task push-ui-stg` | Push the UI image to Harbor |
+| `task build-stg BRANCH=<b>` / `task push-stg BRANCH=<b>` | Build / push `kio-api:stg-<b>` (+ immutable `-build.N` tag) |
+| `task build-ui-stg BRANCH=<b>` / `task push-ui-stg BRANCH=<b>` | Build / push `kio-ui:stg-<b>` with the branch banner |
 | `task apply-stg` | `kubectl apply -k kubernetes-manifests/envs/stg/` |
-| `task rollout-stg` | Restart both deployments in `kio-stg` and wait |
-| `task release-stg BRANCH=<branch>` | Full pipeline — all of the above in order |
-| `task teardown-stg` | Delete the kio-api and kio-ui deployments from `kio-stg` |
+| `task rollout-stg` | Restart both Deployments in `kio-stg` and wait |
+| `task release-stg BRANCH=<b>` | All of the above in order |
+| `task stg-deploy TAG=<tag>` | Deploy a tag with the migrate hard-gate |
+| `task stg-teardown` | Delete the Deployments + Job |
 
-## URLs
+## Branch banner
 
-| Service | URL |
-|---|---|
-| UI | http://stg.kio.example.local |
-| API | http://api.stg.kio.example.local |
+Whenever `KIO_BRANCH` is set in the UI image, a fixed amber bar appears at the top of
+every page showing the branch name. It is baked in at build time and cannot be
+overridden at runtime.
 
-## Kubernetes manifest layout
+## Manifest layout
 
 ```
 kubernetes-manifests/envs/stg/
-├── kustomization.yaml        # namespace kio-stg, images stg-latest
-├── httproute.yaml            # HTTPRoutes for stg.kio.example.local and api.stg.kio.example.local
-├── mqtt-patch.yaml           # MQTT_TOPIC_PREFIX: kio/stg
-├── cors-patch.yaml           # CORS_ORIGINS: ["http://stg.kio.example.local"]
-├── ui-patch.yaml             # API_URL: /api
+├── kustomization.yaml         # namespace kio-stg, images stg-main
+├── ingressroute.yaml          # traefik-private routes + private-ca Certificate
+├── api-configmap-patch.yaml
+├── cors-patch.yaml
+├── mqtt-patch.yaml            # MQTT_TOPIC_PREFIX: kio/stg
+├── nodeport-patch.yaml
+├── ui-patch.yaml              # API_URL: /api
 └── secrets/
-    └── sealed-api-secrets.yaml   # SealedSecret for DATABASE_URL (kio-stg namespace-scoped)
+    ├── sealed-api-secrets.yaml      # DATABASE_URL (kio_stg), MQTT_*, DEV_* — scoped to ns kio-stg
+    └── sealed-harbor-registry.yaml  # image pull secret — scoped to ns kio-stg
 ```
 
-## Regenerating the SealedSecret
+## Rotating the staging secrets
 
-The `SealedSecret` in `secrets/sealed-api-secrets.yaml` is scoped to the `kio-stg` namespace — it will not decrypt in any other namespace. If you need to rotate the database password or recreate it:
+The SealedSecrets only decrypt in namespace `kio-stg`. To rotate:
 
 ```bash
-kubectl create secret generic kio-api \
-  --namespace kio-stg \
-  --from-literal=DATABASE_URL='postgresql+asyncpg://<user>:<pass>@q-postgres-rw.q-postgres.svc.cluster.local:5432/kio_dev' \
-  --dry-run=client -o yaml \
-| kubeseal --format yaml --namespace kio-stg \
-> kubernetes-manifests/envs/stg/secrets/sealed-api-secrets.yaml
+kubectl create secret generic kio-api -n kio-stg \
+  --from-literal=DATABASE_URL='postgresql+asyncpg://kio_stg:<pw>@q-postgres-rw.q-postgres.svc.cluster.local:5432/kio_stg' \
+  --from-literal=MQTT_HOST=... --from-literal=MQTT_PORT=1883 --from-literal=MQTT_TOPIC_PREFIX=kio/stg \
+  --from-literal=DEV_USERNAME=... --from-literal=DEV_PASSWORD=... \
+  --dry-run=client -o yaml | kubeseal --format yaml > kubernetes-manifests/envs/stg/secrets/sealed-api-secrets.yaml
 ```
 
-Then commit the updated file and redeploy.
+The `kio_stg` DB password is sealed in private-ops
+`q-postgres/base/secrets/secret-kio-stg-postgres-user.yaml`; change both together.

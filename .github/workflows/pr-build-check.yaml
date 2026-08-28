@@ -1,0 +1,60 @@
+name: PR Build Check
+
+# 🧪🐳 Opt-in PR check: add the `build-check` label to a pull request to run lint,
+# the unit tests, and verify both Docker images build — WITHOUT pushing them to
+# Harbor. Re-runs on new commits while the label is present. (tests.yaml already
+# runs the unit suites on every PR; this adds lint + the image builds.)
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+concurrency:
+  group: pr-build-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-check:
+    if: contains(github.event.pull_request.labels.*.name, 'build-check')
+    runs-on: kio
+    container:
+      image: harbor.squid-ink.us/politeauthority/polite-cicd:${{ vars.CICD_VERSION }}
+      options: '--dns 8.8.8.8'
+      credentials:
+        username: ${{ vars.HARBOR_USER }}
+        password: ${{ secrets.HARBOR_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          task lint
+      - name: Unit tests
+        id: unit
+        run: |
+          set -o pipefail
+          task test 2>&1 | tee /tmp/unit.txt
+      - name: Log in to Harbor (to pull base images; nothing is pushed)
+        uses: docker/login-action@v3
+        with:
+          registry: harbor.squid-ink.us
+          username: ${{ vars.HARBOR_USER }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Docker build (no push)
+        run: task build:check
+      - name: 📋 Summary
+        if: always()
+        run: |
+          UNIT=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/unit.txt 2>/dev/null | tail -1 || true)
+          if [ "${{ job.status }}" = "success" ]; then head="## ✅ 🧪🐳 PR build-check passed"; else head="## ❌ 🧪🐳 PR build-check failed"; fi
+          {
+            echo "> ▶️ **Why this ran:** PR #${{ github.event.pull_request.number }} carries the \`build-check\` label, which opts it into lint + unit tests + a no-push Docker build of both images."
+            echo ""
+            echo "$head"
+            echo ""
+            echo "🧪 Unit tests: \`${UNIT:-see logs}\`"
+            echo "🐳 Docker builds (kio-api, kio-ui): verified (images **not** pushed to Harbor)"
+          } >> "$GITHUB_STEP_SUMMARY"

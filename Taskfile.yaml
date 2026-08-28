@@ -17,6 +17,11 @@ vars:
     sh: bash -c '. .env 2>/dev/null; echo "${KIO_DIR:-/home/pi/kio}"'
   MQTT_HOST:
     sh: bash -c '. .env 2>/dev/null; echo "${MQTT_HOST:-192.168.1.100}"'
+  # Checkout of the private-ops GitOps repo. Production is deployed by ArgoCD from
+  # <PRIVATE_OPS_DIR>/kio/kio; stamp-prd writes the release version there.
+  PRIVATE_OPS_DIR:
+    sh: bash -c '. .env 2>/dev/null; echo "${PRIVATE_OPS_DIR:-../private-ops}"'
+  PRD_OVERLAY: "{{.PRIVATE_OPS_DIR}}/kio/kio"
 
 
 tasks:
@@ -25,16 +30,44 @@ tasks:
     cmds:
       - kubectl apply -k kubernetes-manifests/envs/dev/
 
-  apply-prd:
-    desc: Apply production k8s manifests
-    cmds:
-      - kubectl apply -k kubernetes-manifests/envs/prd/
+  # There is deliberately no apply-prd: production is owned by ArgoCD from the
+  # private-ops repo (kio/kio). Change the version with stamp-prd, commit + push
+  # private-ops, and ArgoCD rolls it out (migrate PreSync hook → deployments).
 
   apply-stg:
-    desc: Apply kio-stg k8s manifests (copies harbor-registry pull secret from kio-dev if absent)
+    desc: Apply kio-stg k8s manifests (incl. the namespace-scoped SealedSecrets)
     cmds:
-      - kubectl get secret harbor-registry -n kio-stg --ignore-not-found | grep -q harbor-registry || kubectl get secret harbor-registry -n kio-dev -o json | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.annotations,.metadata.namespace)' | kubectl apply -n kio-stg -f -
       - kubectl apply -k kubernetes-manifests/envs/stg/
+
+  stg-deploy:
+    desc: "Deploy an image tag to kio-stg and gate on migrations + rollout (usage: task stg-deploy TAG=stg-feat-my-feature)"
+    vars:
+      TAG: '{{.TAG | default "stg-main"}}'
+      NS: kio-stg
+    cmds:
+      - |
+        set -euo pipefail
+        echo "Deploying {{.IMAGE}}:{{.TAG}} / {{.IMAGE_UI}}:{{.TAG}} to {{.NS}}"
+        # Stamps the tag in place — don't commit that change; the committed tag is stg-main.
+        (cd kubernetes-manifests/envs/stg && kustomize edit set image {{.IMAGE}}:{{.TAG}} {{.IMAGE_UI}}:{{.TAG}})
+        # Jobs are immutable: drop the previous migrate Job so the new image can run it.
+        kubectl -n {{.NS}} delete job kio-migrate --ignore-not-found
+        kubectl apply -k kubernetes-manifests/envs/stg/
+        echo "Waiting for migrations..."
+        kubectl -n {{.NS}} wait --for=condition=complete --timeout=240s job/kio-migrate || true
+        kubectl -n {{.NS}} logs job/kio-migrate --tail=50 || true
+        # Hard gate: a failed migration must fail the deploy, not just log.
+        kubectl -n {{.NS}} get job kio-migrate -o jsonpath='{.status.succeeded}' | grep -q 1
+        kubectl -n {{.NS}} rollout status deployment/kio-api --timeout=300s
+        kubectl -n {{.NS}} rollout status deployment/kio-ui  --timeout=300s
+        echo "kio-stg is running {{.TAG}}"
+
+  stg-teardown:
+    desc: Tear staging down — delete the kio-stg Deployments and migrate Job (namespace + secrets stay)
+    cmds:
+      - kubectl -n kio-stg delete deployment kio-api kio-ui --ignore-not-found
+      - kubectl -n kio-stg delete job kio-migrate --ignore-not-found
+      - 'echo "kio-stg torn down. Bring it back with task release-stg BRANCH=<branch>"'
 
   # Non-prod builds (dev / stg) are tagged twice: a rolling tag the kustomize overlays
   # point at (dev-latest / stg-<branch>) plus an immutable per-build tag suffixed with the
@@ -132,40 +165,60 @@ tasks:
     dir: tests/e2e
     cmds:
       - uv sync
-      - uv run playwright install chromium
-
-  bump:major:
-    desc: Bump major version (0.1.0 -> 1.0.0)
-    cmds:
-      - python3 -c "v=open('VERSION').read().strip().split('.'); v[0]=str(int(v[0])+1); v[1]='0'; v[2]='0'; open('VERSION','w').write('.'.join(v)+'\n')"
-      - task: sync:manifest-version
-      - echo "-> v$(cat VERSION)"
-
-  bump:minor:
-    desc: Bump minor version (0.1.0 -> 0.2.0)
-    cmds:
-      - python3 -c "v=open('VERSION').read().strip().split('.'); v[1]=str(int(v[1])+1); v[2]='0'; open('VERSION','w').write('.'.join(v)+'\n')"
-      - task: sync:manifest-version
-      - echo "-> v$(cat VERSION)"
-
-  bump:patch:
-    desc: Bump patch version (0.1.0 -> 0.1.1)
-    cmds:
-      - python3 -c "v=open('VERSION').read().strip().split('.'); v[2]=str(int(v[2])+1); open('VERSION','w').write('.'.join(v)+'\n')"
-      - task: sync:manifest-version
-      - echo "-> v$(cat VERSION)"
-
-  sync:manifest-version:
-    desc: Sync the HA integration manifest.json "version" to the current VERSION file
-    cmds:
-      - python3 -c "import json; v=open('VERSION').read().strip(); p='{{.MANIFEST}}'; m=json.load(open(p)); m['version']=v; open(p,'w').write(json.dumps(m, indent=2)+'\n')"
-      - echo "-> manifest {{.MANIFEST}} version $(cat VERSION)"
+      # --with-deps installs Chromium's system libraries too (needs sudo on Linux; no-op on macOS).
+      - uv run playwright install --with-deps chromium
 
   bump:build:
     desc: Increment the monotonic build number (BUILD file). Run once per release.
     cmds:
       - python3 -c "n=int(open('BUILD').read().strip() or 0)+1; open('BUILD','w').write(str(n)+'\n')"
       - echo "-> build $(cat BUILD)"
+
+  # ---------------------------------------------------------------------------
+  # CI contract (private-ops/docs/cicd-repo-onboarding.md). release-please.yaml and
+  # pr-build-check.yaml call exactly these; they must also work from a laptop.
+  # ---------------------------------------------------------------------------
+  test:
+    desc: "CI: every environment-independent suite, from a bare checkout (API + pi-agent)"
+    cmds:
+      - task: test:api
+      - task: test:pi-agent
+
+  lint:
+    desc: "CI: linters, non-zero exit on findings"
+    dir: src/api
+    cmds:
+      - uv run ruff check app tests
+
+  ci-build-push:
+    desc: "CI: build linux/amd64 kio-api + kio-ui and push :${RELEASE_VERSION} + :latest to Harbor. Requires RELEASE_VERSION."
+    cmds:
+      - |
+        set -euo pipefail
+        VERSION="${RELEASE_VERSION:?RELEASE_VERSION must be set}"
+        # Buildkit pinned to v0.17.3 (bundles runc 1.1.x): newer buildkit ships
+        # runc >=1.2, which fails on the runner nodes' 5.4 kernel — the same
+        # constraint that pins docker:26.1-dind in private-ops/arc. The builder
+        # name carries the pin so a stale unpinned builder is never reused.
+        docker buildx create --use --driver docker-container --driver-opt image=moby/buildkit:v0.17.3 --name ci-builder-bk0173 --bootstrap 2>/dev/null || docker buildx use ci-builder-bk0173
+        docker buildx build --platform linux/amd64 --target production --build-arg VERSION=${VERSION} \
+          -f docker/Dockerfile.api --push \
+          -t {{.IMAGE}}:${VERSION} -t {{.IMAGE}}:latest .
+        docker buildx build --platform linux/amd64 \
+          -f docker/Dockerfile.ui --push \
+          -t {{.IMAGE_UI}}:${VERSION} -t {{.IMAGE_UI}}:latest .
+        echo "Pushed {{.IMAGE}}:${VERSION} and {{.IMAGE_UI}}:${VERSION} (+ :latest)"
+
+  build:check:
+    desc: "CI: build both images with no push (cacheonly) to verify they compile"
+    cmds:
+      - |
+        set -euo pipefail
+        # Same pinned builder as ci-build-push (see that task's comment).
+        docker buildx create --use --driver docker-container --driver-opt image=moby/buildkit:v0.17.3 --name ci-builder-bk0173 --bootstrap 2>/dev/null || docker buildx use ci-builder-bk0173
+        docker buildx build --platform linux/amd64 --target production -f docker/Dockerfile.api --output type=cacheonly .
+        docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui --output type=cacheonly .
+        echo "Both images build cleanly (nothing pushed)"
 
   test:api:
     desc: Run API unit tests
@@ -211,22 +264,6 @@ tasks:
     dir: src/ui
     cmds:
       - npm run dev
-
-  git-tag:
-    desc: Commit the version + build stamp and (re)create the release tag for the current version
-    vars:
-      BUILD:
-        sh: cat BUILD
-    cmds:
-      - git add VERSION BUILD kubernetes-manifests/envs/prd/kustomization.yaml
-      # Tolerate a no-op commit so re-running a release doesn't abort here.
-      - git diff --cached --quiet || git commit -m "release v{{.VERSION}} (build {{.BUILD}})"
-      # -f so re-releasing a version (a new build of the same VERSION) moves the
-      # v{VERSION} tag to the latest build instead of failing "tag already exists".
-      # The dashboard agent-updater points nodes at this tag, so it must track the
-      # newest deployed build of the version.
-      - git tag -f -a "v{{.VERSION}}" -m "Release v{{.VERSION}} (build {{.BUILD}})"
-      - 'echo "Tagged v{{.VERSION}} build {{.BUILD}} -- push with git push origin main && git push --force origin v{{.VERSION}}"'
 
   ha:deploy:
     desc: Deploy the kio Home Assistant integration and restart HA core
@@ -530,17 +567,23 @@ tasks:
       - task: rollout-dev
 
   release-prd:
-    desc: "Full production release: build API + UI, push, stamp kustomization, deploy, git-tag"
+    desc: "Escape hatch: rebuild + push images for the CURRENT VERSION and stamp private-ops. Normal releases are cut by release-please (push to main)."
+    preconditions:
+      - sh: git rev-parse -q --verify "refs/tags/v{{.VERSION}}" >/dev/null
+        msg: "No tag v{{.VERSION}}. Versions are owned by release-please — cut one by pushing Conventional Commits to main (or the Force Release workflow), then re-run."
     cmds:
-      # No bump:build — production images are versioned by SemVer (patch), not build number.
-      - task: stamp-prd
+      # Versions are owned by release-please (VERSION, manifest.json, CHANGELOG, tag).
+      # This only re-publishes the images for the tagged version and re-stamps the
+      # overlay, e.g. after a Harbor loss.
       - task: build-prd
       - task: push-prd
       - task: build-ui-prd
       - task: push-ui-prd
-      - task: apply-prd
-      - task: rollout-prd
-      - task: git-tag
+      - task: stamp-prd
+      - |
+        echo ""
+        echo "Next: (cd {{.PRIVATE_OPS_DIR}} && git add kio/kio/kustomization.yaml && git commit -m 'chore(kio): release kio v{{.VERSION}}' && git push origin main)"
+        echo "ArgoCD then syncs prd (migrate PreSync hook → rollout)."
 
   release-stg:
     desc: "Build, push, and deploy staging from a branch (usage: task release-stg BRANCH=feat/my-feature)"
@@ -597,17 +640,30 @@ tasks:
       - kubectl rollout status deployment/kio-api -n kio-stg --timeout=120s
       - kubectl rollout status deployment/kio-ui -n kio-stg --timeout=120s
 
-  teardown-stg:
-    desc: Delete the kio-api and kio-ui deployments from kio-stg
-    cmds:
-      - kubectl delete deployment kio-api kio-ui -n kio-stg --ignore-not-found
-
   stamp-prd:
-    desc: Write the current version into the prd kustomization.yaml
-    dir: kubernetes-manifests/envs/prd
+    desc: Write the current version into the private-ops prd overlay (image tags + base ref)
+    preconditions:
+      - sh: test -f {{.PRD_OVERLAY}}/kustomization.yaml
+        msg: "private-ops checkout not found at {{.PRIVATE_OPS_DIR}} (set PRIVATE_OPS_DIR in .env)"
     cmds:
-      - kustomize edit set image {{.IMAGE}}:{{.VERSION}}
-      - kustomize edit set image {{.IMAGE_UI}}:{{.VERSION}}
+      # Rewrites, in place: every `newTag` under images: (kio-api + kio-ui) and the
+      # `?ref=` on the remote base, which pins kubernetes-manifests/base to the release
+      # tag. Edits the existing entries by pattern rather than `kustomize edit set
+      # image` so it does not depend on HARBOR matching the overlay's image names.
+      # python3 rather than sed -i: the latter is not portable between macOS and Linux.
+      - |
+        python3 - "{{.PRD_OVERLAY}}/kustomization.yaml" "{{.VERSION}}" <<'PY'
+        import pathlib, re, sys
+        path, version = pathlib.Path(sys.argv[1]), sys.argv[2]
+        s = path.read_text()
+        s, n_ref = re.subn(r'(kubernetes-manifests/base\?ref=)\S+', rf'\g<1>v{version}', s)
+        s, n_tag = re.subn(r'^(\s*newTag:\s*)"?[^"\n]+"?\s*$', rf'\g<1>"{version}"', s, flags=re.M)
+        assert n_ref == 1, f"expected 1 base ref, found {n_ref}"
+        assert n_tag == 2, f"expected 2 newTag entries (api + ui), found {n_tag}"
+        path.write_text(s)
+        print(f"-> {path} @ v{version}")
+        PY
+    dir: "{{.PRD_OVERLAY}}"
 
   version:
     desc: Show the current version and build number

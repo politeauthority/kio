@@ -1,3 +1,6 @@
+# Staging (kio-stg) is deployed and torn down BY HAND with the Taskfile — it is not
+# GitOps-managed. `task release-stg BRANCH=<b>` / `task stg-deploy TAG=<t>` / `task stg-teardown`.
+# SealedSecrets are scoped to namespace kio-stg; kio-api points at the dedicated kio_stg DB.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kio-stg
@@ -10,6 +13,7 @@ resources:
 - ../../base
 - ./ingressroute.yaml
 - ./secrets/sealed-api-secrets.yaml
+- ./secrets/sealed-harbor-registry.yaml
 
 patches:
 - path: api-configmap-patch.yaml

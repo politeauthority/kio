@@ -5,8 +5,14 @@
 kio uses a single `VERSION` file at the repo root. Both the API and UI are versioned together and released as a pair. Production images are tagged with the exact version (e.g. `0.1.0`) so any release can be re-deployed or rolled back by name.
 
 ```
-VERSION file  →  kio-api:0.1.0  +  kio-ui:0.1.0  →  Harbor  →  kustomization.yaml  →  k8s
+VERSION file  →  kio-api:0.1.0  +  kio-ui:0.1.0  →  Harbor  →  private-ops kio/kio/kustomization.yaml  →  ArgoCD  →  k8s
 ```
+
+**Production is GitOps.** The prod overlay does not live in this repo — it is
+`kio/kio/` in the private-ops repo, deployed by ArgoCD. That overlay pulls
+`kubernetes-manifests/base/` from here at the release tag (`?ref=vX.Y.Z`) and pins the
+image tags to the same version, so a release is "push images + tag, then bump one file
+in private-ops". Nothing is ever `kubectl apply`'d to the `kio` namespace by hand.
 
 Dev images use a rolling `dev-latest` tag and are not versioned.
 
@@ -24,16 +30,29 @@ Dev images use a rolling `dev-latest` tag and are not versioned.
 
 ## Versioning
 
-The current version lives in `VERSION` at the repo root.
+The current version lives in `VERSION` at the repo root and is **owned by
+[release-please](https://github.com/googleapis/release-please)** — do not edit it by hand
+and there are no `bump:*` tasks. The version is derived from Conventional Commit messages
+on `main`:
+
+| Commit prefix | Bump | Changelog section |
+|---|---|---|
+| `fix:`, `perf:`, `deps:`, `refactor:` | patch | yes |
+| `feat:` | minor | yes |
+| `feat!:` / `BREAKING CHANGE:` footer | major | yes |
+| `chore:`, `docs:`, `test:`, `ci:`, `style:` | none | hidden |
+
+release-please keeps these in sync on every release (`release-please-config.json`):
+`VERSION`, `src/ha-integration/custom_components/kio/manifest.json` (`version`),
+`CHANGELOG.md`, `.release-please-manifest.json`, and the `vX.Y.Z` git tag + GitHub Release.
+
+`src/api/pyproject.toml` and `src/ui/package.json` are deliberately **not** bumped: both
+are pinned in lockfiles (`uv sync --frozen` in the image build would fail on a mismatch)
+and nothing reads them for the app version — `KIO_VERSION` is stamped at build time.
 
 ```bash
-task version        # show current version
-task bump:patch     # 0.1.0 → 0.1.1  (bug fixes)
-task bump:minor     # 0.1.0 → 0.2.0  (new features)
-task bump:major     # 0.1.0 → 1.0.0  (breaking changes)
+task version        # show current version + build number
 ```
-
-Bump before releasing. The release tasks read the version from `VERSION` automatically.
 
 ---
 
@@ -63,52 +82,69 @@ Each build is pushed under **two tags**: the rolling tag the kustomize overlay p
 every build is preserved for rollback and audit while the overlay keeps tracking the
 rolling tag.
 
-`release-prd` commits the bumped `BUILD` (via `git-tag`) so production build numbers
-persist in git. Staging builds bump the counter locally between releases; because it's a
-file counter, the number can drift if you build the same branch from multiple machines.
+Build numbers are a dev/stg concept only — production images carry the clean release-please
+semver (`0.6.7`), never a `-build.N` suffix. Staging bumps the counter locally between
+releases; because it's a file counter, the number can drift if you build the same branch
+from multiple machines.
 
 ---
 
 ## Releasing to production
 
-### Full release (recommended)
+### Normal path: merge to `main`
 
-```bash
-task bump:patch     # or minor/major — sets the new version
-task release-prd    # build → push → stamp → apply → rollout → git tag
-git push origin main --tags
-```
+Every push to `main` runs **Release Please** (`.github/workflows/release-please.yaml`):
 
-`release-prd` runs these steps in order:
+1. release-please reads the Conventional Commits since the last tag and opens/updates a
+   **release PR** (`chore(main): release X.Y.Z`) that bumps `VERSION`, the HA
+   `manifest.json` and `CHANGELOG.md`.
+2. The workflow **auto-merges that PR** (rebase, with the `PAT` secret). No human click.
+3. The merge is a push to `main`, so the workflow runs again — this time
+   `release_created == true`: it tags `vX.Y.Z`, publishes the GitHub Release, then the
+   `build-deploy` job checks out the tag and runs `task test` → `task ci-build-push`
+   (`kio-api:X.Y.Z`, `kio-ui:X.Y.Z`, both also `:latest`) → checks out private-ops →
+   `task stamp-prd` → commits `chore(kio): release kio vX.Y.Z` and pushes `main`.
+4. ArgoCD sees the private-ops commit, runs the `kio-migrate` PreSync hook
+   (`alembic upgrade head`) and rolls the Deployments only if it succeeds.
 
-1. **`bump:build`** — increments the `BUILD` number so this release is uniquely identifiable
-2. **`stamp-prd`** — runs `kustomize edit set image` to write the version into `kubernetes-manifests/envs/prd/kustomization.yaml`
-3. **`build-prd`** — builds `kio-api`, tagged `{VERSION}` (rolling) and `{VERSION}-build.{BUILD}` (immutable), with `KIO_VERSION={VERSION}+build.{BUILD}`
-4. **`push-prd`** — pushes both API tags to Harbor
-5. **`build-ui-prd`** — builds `kio-ui`, tagged `{VERSION}` and `{VERSION}-build.{BUILD}`
-6. **`push-ui-prd`** — pushes both UI tags to Harbor
-7. **`apply-prd`** — `kubectl apply -k kubernetes-manifests/envs/prd/`
-8. **`rollout-prd`** — waits for the `kio-api` and `kio-ui` deployments to finish rolling out
-9. **`git-tag`** — commits `VERSION` + `BUILD` + `kustomization.yaml` and tags the commit `v{VERSION}`
+So a `fix:` merged to `main` is in production a few minutes later with no manual step.
+Commits that are not Conventional (`checking in`) never trigger a release.
 
-After the task completes, push the commit and tag:
+### Forcing a release
 
-```bash
-git push origin main --tags
-```
+**Actions → Force Release → Run workflow.** Pick `patch`/`minor`/`major` or type an exact
+version. It pushes an empty `Release-As: X.Y.Z` commit to `main`, which drives the normal
+pipeline above. Use it when only `chore:`/`docs:` commits have landed, or to cut a specific
+version number.
 
-### Running steps individually
+### PR checks
 
-```bash
-task build-prd        # build kio-api:{VERSION}
-task build-ui-prd     # build kio-ui:{VERSION}
-task push-prd         # push API image
-task push-ui-prd      # push UI image
-task stamp-prd        # write version into envs/prd/kustomization.yaml
-task apply-prd        # kubectl apply
-task rollout-prd      # wait for rollout
-task git-tag          # commit + tag
-```
+`tests.yaml` runs the unit suites on every PR. Add the **`build-check`** label to a PR to
+also run `task lint` and a no-push build of both images (`pr-build-check.yaml`).
+
+### Repo settings the pipeline needs (one-time, human)
+
+| Name | Kind | Value |
+|---|---|---|
+| `HARBOR_USER` | variable | `robot$ci` |
+| `CICD_VERSION` | variable | current `polite-cicd` image tag (copy from bookmarx/quigley-api) |
+| `HARBOR_PASSWORD` | secret | shared `robot$ci` token (also add to *Dependabot* secrets) |
+| `PAT` | secret | classic PAT with `repo` (+`workflow`) scope — must be able to merge PRs and push tags |
+| `PRIVATE_OPS_TOKEN` | secret | PAT with contents:write on `politeauthority/private-ops` |
+
+Plus: enable **rebase merging** on the repo, create the `build-check` label, and if `main`
+becomes branch-protected the PAT owner must be able to bypass it.
+
+Known failure modes: an **expired PAT** silently stops releases (release PRs open but never
+merge) — the auto-merge step logs an explicit 403 hint. Fix the PAT; there is no fallback
+by design.
+
+### Escape hatch: re-publish from a laptop
+
+`task release-prd` rebuilds and pushes the images for the **current, already-tagged**
+`VERSION` and re-stamps private-ops (e.g. after a registry loss). It refuses to run if
+`vVERSION` is not a tag — it never invents versions. Needs `PRIVATE_OPS_DIR` in `.env`
+(default `../private-ops`); commit and push private-ops afterwards.
 
 ---
 
@@ -126,35 +162,27 @@ Builds and pushes `kio-api:dev-latest` and `kio-ui:dev-latest`, applies `kuberne
 
 ## Rollback
 
-Because every prod release is tagged with an exact version in Harbor and recorded in `kustomization.yaml` git history, rolling back is straightforward.
-
-### Roll back to a previous version
-
-```bash
-# Edit envs/prd/kustomization.yaml and set newTag to the target version
-# Or use kustomize:
-cd kubernetes-manifests/envs/prd
-kustomize edit set image your-registry.example.com/your-org/kio-api:0.1.0
-kustomize edit set image your-registry.example.com/your-org/kio-ui:0.1.0
-
-# Apply and roll out
-task apply-prd
-task rollout-prd
-```
-
-### Roll back using git
+Every prod release is an immutable tag in Harbor and a `vX.Y.Z` tag here, so rolling back
+is a one-file change in private-ops:
 
 ```bash
-git checkout v0.1.0 -- kubernetes-manifests/envs/prd/kustomization.yaml
-task apply-prd
-task rollout-prd
+cd ../private-ops
+# From kio: writes ?ref= and both newTags for the target version
+(cd ../kio && task stamp-prd VERSION=0.1.0)
+git add kio/kio/kustomization.yaml
+git commit -m "chore(kio): roll back kio to v0.1.0"
+git push origin main
 ```
+
+ArgoCD re-syncs and re-runs `kio-migrate` for that tag. Alembic is a no-op for
+revisions already applied, but it will **not** undo a newer migration — if the release
+being rolled back added one, run `alembic downgrade <rev>` against the DB first.
 
 ---
 
 ## What gets deployed
 
-The `kustomize build kubernetes-manifests/envs/prd/` output includes:
+The `kustomize build kio/kio` output (in private-ops) includes:
 
 - `kio-api` Deployment + Service (FastAPI, port 8000)
 - `kio-ui` Deployment + Service (nginx, port 80)
