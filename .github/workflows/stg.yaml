@@ -1,15 +1,21 @@
 name: STG
 
-# Per-PR staging pipeline. On a pull request: run unit tests, build + push a staging
-# image tagged for the PR, let ArgoCD's ApplicationSet (PR generator, in private-ops)
-# spin up an ephemeral `kio-stg-pr-<N>` namespace from it, run regression e2e against
-# that env, then gate on a manual `staging` environment approval. Closing the PR removes
-# the ApplicationSet entry → the namespace is pruned.
+# Per-PR staging pipeline — OPT-IN: add the `stg-env` label to a pull request.
+# Run unit tests, build + push a staging image tagged for the PR, let ArgoCD's
+# ApplicationSet (PR generator, in private-ops) spin up an ephemeral `kio-stg-pr-<N>`
+# namespace from it, run regression e2e against that env, then gate on a manual
+# `staging` environment approval. Closing the PR removes the ApplicationSet entry →
+# the namespace is pruned.
+#
+# Opt-in because the ephemeral-env infra (ApplicationSet, per-PR DB + secrets, a
+# kubeconfig for the regression job) is not fully provisioned yet — see
+# docs/dev/cicd-rollout.md "Phase 2". Until it is, an unlabeled PR must not go red
+# for it. Re-runs on new commits while the label is present.
 
 on:
   pull_request:
     branches: [main, cicd]
-    types: [opened, synchronize, reopened]
+    types: [labeled, synchronize, reopened]
 
 concurrency:
   group: stg-pr-${{ github.event.number }}
@@ -21,6 +27,7 @@ permissions:
 
 jobs:
   test-build:
+    if: contains(github.event.pull_request.labels.*.name, 'stg-env')
     runs-on: kio
     env:
       # Registry/org for image build+push (Taskfile defaults to a placeholder
@@ -101,7 +108,23 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/bin"
           curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          curl -fsSL -o "$HOME/bin/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x "$HOME/bin/kubectl"
           echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      # TODO(infra, Phase 2): a kubeconfig scoped to the kio-stg-pr-* namespaces
+      # (secrets.STG_KUBECONFIG) — without it the wait below cannot reach the cluster.
+      - name: Configure kubeconfig
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.STG_KUBECONFIG }}" ]; then
+            echo "::error::secrets.STG_KUBECONFIG is not set — the ephemeral-env infra is not provisioned yet (docs/dev/cicd-rollout.md, Phase 2)."
+            exit 1
+          fi
+          mkdir -p ~/.kube
+          echo "${{ secrets.STG_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
 
       # The ArgoCD ApplicationSet PR generator (private-ops/kio/kio-stg-appset.yaml)
       # deploys ${{ needs.test-build.outputs.namespace }} from this PR's image tag.
