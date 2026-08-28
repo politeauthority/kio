@@ -138,38 +138,57 @@ tasks:
       - uv sync
       - uv run playwright install chromium
 
-  bump:major:
-    desc: Bump major version (0.1.0 -> 1.0.0)
-    cmds:
-      - python3 -c "v=open('VERSION').read().strip().split('.'); v[0]=str(int(v[0])+1); v[1]='0'; v[2]='0'; open('VERSION','w').write('.'.join(v)+'\n')"
-      - task: sync:manifest-version
-      - echo "-> v$(cat VERSION)"
-
-  bump:minor:
-    desc: Bump minor version (0.1.0 -> 0.2.0)
-    cmds:
-      - python3 -c "v=open('VERSION').read().strip().split('.'); v[1]=str(int(v[1])+1); v[2]='0'; open('VERSION','w').write('.'.join(v)+'\n')"
-      - task: sync:manifest-version
-      - echo "-> v$(cat VERSION)"
-
-  bump:patch:
-    desc: Bump patch version (0.1.0 -> 0.1.1)
-    cmds:
-      - python3 -c "v=open('VERSION').read().strip().split('.'); v[2]=str(int(v[2])+1); open('VERSION','w').write('.'.join(v)+'\n')"
-      - task: sync:manifest-version
-      - echo "-> v$(cat VERSION)"
-
-  sync:manifest-version:
-    desc: Sync the HA integration manifest.json "version" to the current VERSION file
-    cmds:
-      - python3 -c "import json; v=open('VERSION').read().strip(); p='{{.MANIFEST}}'; m=json.load(open(p)); m['version']=v; open(p,'w').write(json.dumps(m, indent=2)+'\n')"
-      - echo "-> manifest {{.MANIFEST}} version $(cat VERSION)"
-
   bump:build:
     desc: Increment the monotonic build number (BUILD file). Run once per release.
     cmds:
       - python3 -c "n=int(open('BUILD').read().strip() or 0)+1; open('BUILD','w').write(str(n)+'\n')"
       - echo "-> build $(cat BUILD)"
+
+  # ---------------------------------------------------------------------------
+  # CI contract (private-ops/docs/cicd-repo-onboarding.md). release-please.yaml and
+  # pr-build-check.yaml call exactly these; they must also work from a laptop.
+  # ---------------------------------------------------------------------------
+  test:
+    desc: "CI: every environment-independent suite, from a bare checkout (API + pi-agent)"
+    cmds:
+      - task: test:api
+      - task: test:pi-agent
+
+  lint:
+    desc: "CI: linters, non-zero exit on findings"
+    dir: src/api
+    cmds:
+      - uv run ruff check app tests
+
+  ci-build-push:
+    desc: "CI: build linux/amd64 kio-api + kio-ui and push :${RELEASE_VERSION} + :latest to Harbor. Requires RELEASE_VERSION."
+    cmds:
+      - |
+        set -euo pipefail
+        VERSION="${RELEASE_VERSION:?RELEASE_VERSION must be set}"
+        # Buildkit pinned to v0.17.3 (bundles runc 1.1.x): newer buildkit ships
+        # runc >=1.2, which fails on the runner nodes' 5.4 kernel — the same
+        # constraint that pins docker:26.1-dind in private-ops/arc. The builder
+        # name carries the pin so a stale unpinned builder is never reused.
+        docker buildx create --use --driver docker-container --driver-opt image=moby/buildkit:v0.17.3 --name ci-builder-bk0173 --bootstrap 2>/dev/null || docker buildx use ci-builder-bk0173
+        docker buildx build --platform linux/amd64 --target production --build-arg VERSION=${VERSION} \
+          -f docker/Dockerfile.api --push \
+          -t {{.IMAGE}}:${VERSION} -t {{.IMAGE}}:latest .
+        docker buildx build --platform linux/amd64 \
+          -f docker/Dockerfile.ui --push \
+          -t {{.IMAGE_UI}}:${VERSION} -t {{.IMAGE_UI}}:latest .
+        echo "Pushed {{.IMAGE}}:${VERSION} and {{.IMAGE_UI}}:${VERSION} (+ :latest)"
+
+  build:check:
+    desc: "CI: build both images with no push (cacheonly) to verify they compile"
+    cmds:
+      - |
+        set -euo pipefail
+        # Same pinned builder as ci-build-push (see that task's comment).
+        docker buildx create --use --driver docker-container --driver-opt image=moby/buildkit:v0.17.3 --name ci-builder-bk0173 --bootstrap 2>/dev/null || docker buildx use ci-builder-bk0173
+        docker buildx build --platform linux/amd64 --target production -f docker/Dockerfile.api --output type=cacheonly .
+        docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui --output type=cacheonly .
+        echo "Both images build cleanly (nothing pushed)"
 
   test:api:
     desc: Run API unit tests
@@ -215,22 +234,6 @@ tasks:
     dir: src/ui
     cmds:
       - npm run dev
-
-  git-tag:
-    desc: Commit the version + build stamp and (re)create the release tag for the current version
-    vars:
-      BUILD:
-        sh: cat BUILD
-    cmds:
-      - git add VERSION BUILD {{.MANIFEST}}
-      # Tolerate a no-op commit so re-running a release doesn't abort here.
-      - git diff --cached --quiet || git commit -m "release v{{.VERSION}} (build {{.BUILD}})"
-      # -f so re-releasing a version (a new build of the same VERSION) moves the
-      # v{VERSION} tag to the latest build instead of failing "tag already exists".
-      # The dashboard agent-updater points nodes at this tag, so it must track the
-      # newest deployed build of the version.
-      - git tag -f -a "v{{.VERSION}}" -m "Release v{{.VERSION}} (build {{.BUILD}})"
-      - 'echo "Tagged v{{.VERSION}} build {{.BUILD}} -- push with git push origin main && git push --force origin v{{.VERSION}}"'
 
   ha:deploy:
     desc: Deploy the kio Home Assistant integration and restart HA core
@@ -534,22 +537,22 @@ tasks:
       - task: rollout-dev
 
   release-prd:
-    desc: "Full production release: build + push API/UI, git-tag, then stamp the private-ops overlay (commit + push private-ops yourself)"
+    desc: "Escape hatch: rebuild + push images for the CURRENT VERSION and stamp private-ops. Normal releases are cut by release-please (push to main)."
+    preconditions:
+      - sh: git rev-parse -q --verify "refs/tags/v{{.VERSION}}" >/dev/null
+        msg: "No tag v{{.VERSION}}. Versions are owned by release-please — cut one by pushing Conventional Commits to main (or the Force Release workflow), then re-run."
     cmds:
-      # No bump:build — production images are versioned by SemVer (patch), not build number.
+      # Versions are owned by release-please (VERSION, manifest.json, CHANGELOG, tag).
+      # This only re-publishes the images for the tagged version and re-stamps the
+      # overlay, e.g. after a Harbor loss.
       - task: build-prd
       - task: push-prd
       - task: build-ui-prd
       - task: push-ui-prd
-      - task: git-tag
-      # The overlay pins the base to the v{VERSION} tag, so the tag must exist on
-      # GitHub before ArgoCD sees the stamped overlay — push kio first.
       - task: stamp-prd
       - |
         echo ""
-        echo "Next:"
-        echo "  git push origin main && git push --force origin v{{.VERSION}}"
-        echo "  (cd {{.PRIVATE_OPS_DIR}} && git add kio/kio/kustomization.yaml && git commit -m 'chore(kio): release kio v{{.VERSION}}' && git push origin main)"
+        echo "Next: (cd {{.PRIVATE_OPS_DIR}} && git add kio/kio/kustomization.yaml && git commit -m 'chore(kio): release kio v{{.VERSION}}' && git push origin main)"
         echo "ArgoCD then syncs prd (migrate PreSync hook → rollout)."
 
   release-stg:

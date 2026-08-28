@@ -4,9 +4,6 @@ import uuid
 
 import pytest
 
-from tests.conftest import make_saved_url
-
-
 # ---------------------------------------------------------------------------
 # GET /saved-urls
 # ---------------------------------------------------------------------------
@@ -150,11 +147,12 @@ async def mock_session_with_url(client):
     from datetime import datetime, timezone
     from unittest.mock import AsyncMock, MagicMock
 
-    from app.models.saved_url import SavedUrl
-    from app.database import get_session
-    from app.auth import require_dashboard_auth
     from fastapi import Depends, FastAPI
     from httpx import ASGITransport, AsyncClient
+
+    from app.auth import require_dashboard_auth
+    from app.database import get_session
+    from app.models.saved_url import SavedUrl
     from app.routers import agent, agent_settings, auth, event_logs, kiosks, playlists, saved_urls, tokens
 
     now = datetime.now(timezone.utc)
