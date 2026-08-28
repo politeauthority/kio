@@ -8,6 +8,13 @@ name: PRD
 #
 # The release commit carries [skip release] so the push it makes back to the branch
 # re-runs the tests but does NOT trigger a second release (no infinite loop).
+#
+# Two merges landing close together used to break this: run 1 pushed its images, then
+# its git push was rejected (non-fast-forward) because run 2's merge had moved the
+# branch; run 2 then bumped to the same version and Harbor refused the immutable tag.
+# So each run now (1) releases from the branch tip, not its trigger SHA, and skips if
+# the tip is already a release commit; (2) skips past any version whose images already
+# exist in Harbor; (3) rebases onto the tip before pushing the release commit.
 
 on:
   push:
@@ -52,12 +59,22 @@ jobs:
       - name: Release gate ([skip release] in commit message?)
         id: gate
         run: |
+          set -euo pipefail
           if git log -1 --pretty=%B | grep -qF '[skip release]'; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::[skip release] found — tests only, no release."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # Release from the branch tip. If another push landed while this run was
+          # queued, the tip may already be a release commit that covers this one.
+          git fetch origin "${GITHUB_REF_NAME}"
+          git reset --hard "origin/${GITHUB_REF_NAME}"
+          if git log -1 --pretty=%B | grep -qF '[skip release]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Branch tip is already a release commit — nothing to release."
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Harbor
         if: steps.gate.outputs.skip == 'false'
@@ -69,7 +86,21 @@ jobs:
 
       - name: Bump patch version
         if: steps.gate.outputs.skip == 'false'
-        run: task bump:patch
+        run: |
+          set -euo pipefail
+          task bump:patch
+          # Harbor tags are immutable. If a previous run pushed images for this
+          # version but never got to tag it (its git push lost a race), skip past it.
+          for _ in 1 2 3 4 5; do
+            VERSION="$(cat VERSION)"
+            if docker manifest inspect "${HARBOR}/kio-api:${VERSION}" >/dev/null 2>&1 \
+               || docker manifest inspect "${HARBOR}/kio-ui:${VERSION}" >/dev/null 2>&1; then
+              echo "::warning::Images for ${VERSION} already exist in Harbor (orphaned release) — bumping again."
+              task bump:patch
+            else
+              break
+            fi
+          done
 
       - name: Build & push production images
         if: steps.gate.outputs.skip == 'false'
@@ -96,8 +127,18 @@ jobs:
                   kubernetes-manifests/envs/prd/kustomization.yaml
           # [skip release] so this push re-runs tests but not another release.
           git commit -m "release v${VERSION} [skip release]"
+          # The branch may have moved during the build; rebase the release commit
+          # onto the tip so the push is a fast-forward. Only VERSION/manifest/
+          # kustomization are touched, and releases are serialized, so a conflict
+          # here means something else edited those files — fail loudly.
+          for attempt in 1 2 3; do
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}" && break
+            [ "$attempt" = 3 ] && { echo "::error::Could not push the release commit after 3 attempts."; exit 1; }
+            echo "Push rejected (branch moved); retrying..."
+          done
           git tag -a "v${VERSION}" -m "Release v${VERSION}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
           git push origin "v${VERSION}"
           echo "::notice::Released v${VERSION} — ArgoCD will sync prd (migrate hook → rollout)."
 
