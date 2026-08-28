@@ -285,7 +285,11 @@ with open('$CONFIG_FILE') as f:
     for line in f:
         stripped = line.strip()
         if stripped.startswith('${key}:'):
-            print(stripped.split(':', 1)[1].strip())
+            v = stripped.split(':', 1)[1].strip()
+            # A YAML null must round-trip as empty, not the literal word 'null'
+            # (which would otherwise be re-written into the config and, for
+            # start_url, launch Chromium on http://null/).
+            print('' if v in ('null', '~') else v)
             break
 "
 }

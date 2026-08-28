@@ -1,13 +1,20 @@
 #!/bin/bash
 
+# Read start_url from the kiosk config. A YAML null (`start_url: null`, `~`, or
+# empty) must become an empty string — otherwise Chromium is launched with the
+# literal word "null" and the kiosk sits on http://null/.
 START_URL=$(python3 -c "
 with open('/etc/kio/kiosk.yaml') as f:
     for line in f:
         s = line.strip()
         if s.startswith('start_url:'):
-            print(s.split(':', 1)[1].strip())
+            v = s.split(':', 1)[1].strip().strip('\"\'')
+            print('' if v in ('', 'null', '~', 'None') else v)
             break
 " 2>/dev/null)
+# No start_url -> open a blank tab; the agent replaces it with the global default
+# page (Settings -> Default Page) or the resumed playlist once it comes up.
+START_URL="${START_URL:-about:blank}"
 
 # Core flags — always on
 CORE_FLAGS=(
