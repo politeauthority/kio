@@ -2,11 +2,12 @@
 
 How kio is built, packaged, and deployed today.
 
-> **There is no hosted CI runner.** kio has no GitHub Actions / GitLab CI / Jenkins
-> pipeline. Every build and deploy is driven from a developer machine through
-> [`task`](https://taskfile.dev) targets defined in the repo-root `Taskfile.yaml`,
-> talking directly to the Harbor registry and the Kubernetes cluster (`kubectl` +
-> `kustomize` + `kubeseal`). This document describes that flow end to end.
+> **Production is GitOps.** `.github/workflows/prd.yaml` (self-hosted `kio` ARC runner)
+> builds and pushes the release images, tags this repo, and stamps the version into the
+> private-ops repo's `kio/kio` overlay; **ArgoCD** deploys from there. The prod overlay is
+> not in this repo. Dev and staging are still driven from a developer machine through
+> [`task`](https://taskfile.dev) targets in the repo-root `Taskfile.yaml` (`kubectl` +
+> `kustomize` + `kubeseal`). Every CI step is a `task` target you can run locally.
 
 Related docs: [releasing.md](releasing.md) (prod/dev release mechanics & rollback),
 [staging.md](staging.md) (per-branch staging), [testing.md](testing.md) (unit + e2e tests).
@@ -43,10 +44,13 @@ few build flags differ.
 3. **Push** — `docker push` of both tags to Harbor (`$HARBOR/kio-api`, `$HARBOR/kio-ui`).
 4. **Stamp** — `kustomize edit set image` writes the rolling tag into the env's
    `kustomization.yaml` (prod/stg only; dev uses a fixed rolling tag).
-5. **Apply** — `kubectl apply -k kubernetes-manifests/envs/<env>/`. This applies the
-   Deployments, Services, HTTPRoutes, SealedSecret, and the `kio-migrate` Job.
-6. **Rollout** — `kubectl rollout restart` + `rollout status` until both
-   Deployments report ready.
+5. **Apply** — dev/stg: `kubectl apply -k kubernetes-manifests/envs/<env>/`, which
+   applies the Deployments, Services, routes, SealedSecret, and the `kio-migrate` Job.
+   **Prod: no apply.** The stamp lands in private-ops (`kio/kio/kustomization.yaml`,
+   which also pins `kubernetes-manifests/base` to the release tag via `?ref=`) and
+   ArgoCD syncs it, running `kio-migrate` as a PreSync hook first.
+6. **Rollout** — dev/stg: `kubectl rollout restart` + `rollout status` until both
+   Deployments report ready. Prod: ArgoCD rolls the Deployments after the hook succeeds.
 
 `$HARBOR` is read from `.env` (`HARBOR=...`); see `.env.example`. All `buildx`
 builds target `linux/amd64` because the cluster is amd64 while developer machines
@@ -157,13 +161,13 @@ task test:e2e                                                 # live e2e from yo
 
 ```bash
 task bump:patch       # or minor / major — updates VERSION
-task release-prd      # build → push → stamp → apply → rollout → git tag
+task release-prd      # build → push → git tag → stamp private-ops (then push both repos)
 git push origin main --tags
 ```
 
 `release-prd` builds both images with `--target production` and tags them with the
 exact `VERSION`. Every prod release is an immutable, named tag in Harbor and a commit
-in git history, so rollback is "set the tag back and re-apply." Full details and
+in git history, so rollback is "set the tag back in private-ops and push." Full details and
 rollback steps in [releasing.md](releasing.md).
 
 ### Dev (rolling)
@@ -233,7 +237,7 @@ Harbor pull credentials live in the `harbor-registry` image-pull secret;
 | `task bump:build` | Increment the build number (release-* runs this automatically) |
 | `task release-dev` | Bump + build (`production`) + push + apply + rollout → `kio-dev` |
 | `task release-stg BRANCH=<b>` | Bump + build (`test`, incl. suite) + push + stamp + apply + rollout → `kio-stg` |
-| `task release-prd` | Bump + build (`production`) + push + stamp + apply + rollout + git tag → `kio` |
+| `task release-prd` | Build (`production`) + push + git tag + stamp private-ops overlay → ArgoCD → `kio` |
 | `task build-test:api` | Build the API `test` image locally (`$HARBOR/kio-api:test`) |
 | `task test:api:docker` | Build the `test` image and run the unit suite inside it |
 | `task test:api` | Run the unit suite on the host via `uv` |

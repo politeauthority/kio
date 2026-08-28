@@ -17,6 +17,11 @@ vars:
     sh: bash -c '. .env 2>/dev/null; echo "${KIO_DIR:-/home/pi/kio}"'
   MQTT_HOST:
     sh: bash -c '. .env 2>/dev/null; echo "${MQTT_HOST:-192.168.1.100}"'
+  # Checkout of the private-ops GitOps repo. Production is deployed by ArgoCD from
+  # <PRIVATE_OPS_DIR>/kio/kio; stamp-prd writes the release version there.
+  PRIVATE_OPS_DIR:
+    sh: bash -c '. .env 2>/dev/null; echo "${PRIVATE_OPS_DIR:-../private-ops}"'
+  PRD_OVERLAY: "{{.PRIVATE_OPS_DIR}}/kio/kio"
 
 
 tasks:
@@ -25,10 +30,9 @@ tasks:
     cmds:
       - kubectl apply -k kubernetes-manifests/envs/dev/
 
-  apply-prd:
-    desc: Apply production k8s manifests
-    cmds:
-      - kubectl apply -k kubernetes-manifests/envs/prd/
+  # There is deliberately no apply-prd: production is owned by ArgoCD from the
+  # private-ops repo (kio/kio). Change the version with stamp-prd, commit + push
+  # private-ops, and ArgoCD rolls it out (migrate PreSync hook → deployments).
 
   apply-stg:
     desc: Apply kio-stg k8s manifests (copies harbor-registry pull secret from kio-dev if absent)
@@ -218,7 +222,7 @@ tasks:
       BUILD:
         sh: cat BUILD
     cmds:
-      - git add VERSION BUILD kubernetes-manifests/envs/prd/kustomization.yaml
+      - git add VERSION BUILD {{.MANIFEST}}
       # Tolerate a no-op commit so re-running a release doesn't abort here.
       - git diff --cached --quiet || git commit -m "release v{{.VERSION}} (build {{.BUILD}})"
       # -f so re-releasing a version (a new build of the same VERSION) moves the
@@ -530,17 +534,23 @@ tasks:
       - task: rollout-dev
 
   release-prd:
-    desc: "Full production release: build API + UI, push, stamp kustomization, deploy, git-tag"
+    desc: "Full production release: build + push API/UI, git-tag, then stamp the private-ops overlay (commit + push private-ops yourself)"
     cmds:
       # No bump:build — production images are versioned by SemVer (patch), not build number.
-      - task: stamp-prd
       - task: build-prd
       - task: push-prd
       - task: build-ui-prd
       - task: push-ui-prd
-      - task: apply-prd
-      - task: rollout-prd
       - task: git-tag
+      # The overlay pins the base to the v{VERSION} tag, so the tag must exist on
+      # GitHub before ArgoCD sees the stamped overlay — push kio first.
+      - task: stamp-prd
+      - |
+        echo ""
+        echo "Next:"
+        echo "  git push origin main && git push --force origin v{{.VERSION}}"
+        echo "  (cd {{.PRIVATE_OPS_DIR}} && git add kio/kio/kustomization.yaml && git commit -m 'chore(kio): release kio v{{.VERSION}}' && git push origin main)"
+        echo "ArgoCD then syncs prd (migrate PreSync hook → rollout)."
 
   release-stg:
     desc: "Build, push, and deploy staging from a branch (usage: task release-stg BRANCH=feat/my-feature)"
@@ -603,11 +613,29 @@ tasks:
       - kubectl delete deployment kio-api kio-ui -n kio-stg --ignore-not-found
 
   stamp-prd:
-    desc: Write the current version into the prd kustomization.yaml
-    dir: kubernetes-manifests/envs/prd
+    desc: Write the current version into the private-ops prd overlay (image tags + base ref)
+    preconditions:
+      - sh: test -f {{.PRD_OVERLAY}}/kustomization.yaml
+        msg: "private-ops checkout not found at {{.PRIVATE_OPS_DIR}} (set PRIVATE_OPS_DIR in .env)"
     cmds:
-      - kustomize edit set image {{.IMAGE}}:{{.VERSION}}
-      - kustomize edit set image {{.IMAGE_UI}}:{{.VERSION}}
+      # Rewrites, in place: every `newTag` under images: (kio-api + kio-ui) and the
+      # `?ref=` on the remote base, which pins kubernetes-manifests/base to the release
+      # tag. Edits the existing entries by pattern rather than `kustomize edit set
+      # image` so it does not depend on HARBOR matching the overlay's image names.
+      # python3 rather than sed -i: the latter is not portable between macOS and Linux.
+      - |
+        python3 - "{{.PRD_OVERLAY}}/kustomization.yaml" "{{.VERSION}}" <<'PY'
+        import pathlib, re, sys
+        path, version = pathlib.Path(sys.argv[1]), sys.argv[2]
+        s = path.read_text()
+        s, n_ref = re.subn(r'(kubernetes-manifests/base\?ref=)\S+', rf'\g<1>v{version}', s)
+        s, n_tag = re.subn(r'^(\s*newTag:\s*)"?[^"\n]+"?\s*$', rf'\g<1>"{version}"', s, flags=re.M)
+        assert n_ref == 1, f"expected 1 base ref, found {n_ref}"
+        assert n_tag == 2, f"expected 2 newTag entries (api + ui), found {n_tag}"
+        path.write_text(s)
+        print(f"-> {path} @ v{version}")
+        PY
+    dir: "{{.PRD_OVERLAY}}"
 
   version:
     desc: Show the current version and build number
