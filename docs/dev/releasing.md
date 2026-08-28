@@ -5,8 +5,14 @@
 kio uses a single `VERSION` file at the repo root. Both the API and UI are versioned together and released as a pair. Production images are tagged with the exact version (e.g. `0.1.0`) so any release can be re-deployed or rolled back by name.
 
 ```
-VERSION file  →  kio-api:0.1.0  +  kio-ui:0.1.0  →  Harbor  →  kustomization.yaml  →  k8s
+VERSION file  →  kio-api:0.1.0  +  kio-ui:0.1.0  →  Harbor  →  private-ops kio/kio/kustomization.yaml  →  ArgoCD  →  k8s
 ```
+
+**Production is GitOps.** The prod overlay does not live in this repo — it is
+`kio/kio/` in the private-ops repo, deployed by ArgoCD. That overlay pulls
+`kubernetes-manifests/base/` from here at the release tag (`?ref=vX.Y.Z`) and pins the
+image tags to the same version, so a release is "push images + tag, then bump one file
+in private-ops". Nothing is ever `kubectl apply`'d to the `kio` namespace by hand.
 
 Dev images use a rolling `dev-latest` tag and are not versioned.
 
@@ -71,31 +77,47 @@ file counter, the number can drift if you build the same branch from multiple ma
 
 ## Releasing to production
 
-### Full release (recommended)
+### CI (normal path)
+
+Push to `main`. The `PRD` workflow (`.github/workflows/prd.yaml`) runs the unit tests,
+then unless the commit message contains `[skip release]`:
+
+1. `bump:patch` — new `VERSION` (+ HA integration `manifest.json`)
+2. `build-prd` / `push-prd` / `build-ui-prd` / `push-ui-prd` — clean `{VERSION}` tags to Harbor
+3. commits `release vX.Y.Z [skip release]` and pushes the `vX.Y.Z` tag to this repo
+4. checks out private-ops, runs `stamp-prd` (rewrites `?ref=` and both `newTag`s in
+   `kio/kio/kustomization.yaml`), commits `chore(kio): release kio vX.Y.Z`, pushes `main`
+
+ArgoCD sees the private-ops commit, runs the `kio-migrate` PreSync hook
+(`alembic upgrade head`) and rolls the Deployments only if it succeeds.
+
+Secrets the workflow needs: `HARBOR_PASSWORD`, `PRIVATE_OPS_TOKEN` (PAT with
+contents:write on private-ops), optionally `KIO_PUSH_TOKEN` if `main` is protected.
+
+### From a laptop
+
+Needs a private-ops checkout; set `PRIVATE_OPS_DIR` in `.env` (default `../private-ops`).
 
 ```bash
 task bump:patch     # or minor/major — sets the new version
-task release-prd    # build → push → stamp → apply → rollout → git tag
-git push origin main --tags
+task release-prd    # build → push → git-tag → stamp private-ops
+git push origin main && git push --force origin vX.Y.Z      # tag first: the overlay pins base to it
+cd ../private-ops && git add kio/kio/kustomization.yaml \
+  && git commit -m "chore(kio): release kio vX.Y.Z" && git push origin main
 ```
 
 `release-prd` runs these steps in order:
 
-1. **`bump:build`** — increments the `BUILD` number so this release is uniquely identifiable
-2. **`stamp-prd`** — runs `kustomize edit set image` to write the version into `kubernetes-manifests/envs/prd/kustomization.yaml`
-3. **`build-prd`** — builds `kio-api`, tagged `{VERSION}` (rolling) and `{VERSION}-build.{BUILD}` (immutable), with `KIO_VERSION={VERSION}+build.{BUILD}`
-4. **`push-prd`** — pushes both API tags to Harbor
-5. **`build-ui-prd`** — builds `kio-ui`, tagged `{VERSION}` and `{VERSION}-build.{BUILD}`
-6. **`push-ui-prd`** — pushes both UI tags to Harbor
-7. **`apply-prd`** — `kubectl apply -k kubernetes-manifests/envs/prd/`
-8. **`rollout-prd`** — waits for the `kio-api` and `kio-ui` deployments to finish rolling out
-9. **`git-tag`** — commits `VERSION` + `BUILD` + `kustomization.yaml` and tags the commit `v{VERSION}`
+1. **`build-prd`** — builds `kio-api:{VERSION}`
+2. **`push-prd`** — pushes it to Harbor
+3. **`build-ui-prd`** — builds `kio-ui:{VERSION}`
+4. **`push-ui-prd`** — pushes it to Harbor
+5. **`git-tag`** — commits `VERSION` + `BUILD` + `manifest.json` and tags the commit `v{VERSION}`
+6. **`stamp-prd`** — writes `{VERSION}` into the private-ops overlay: `?ref=v{VERSION}` on the
+   remote base and `newTag` for both images
 
-After the task completes, push the commit and tag:
-
-```bash
-git push origin main --tags
-```
+Push **this repo's tag before** pushing private-ops — the overlay references the tag, and
+ArgoCD's kustomize build fails until it exists on GitHub.
 
 ### Running steps individually
 
@@ -104,10 +126,9 @@ task build-prd        # build kio-api:{VERSION}
 task build-ui-prd     # build kio-ui:{VERSION}
 task push-prd         # push API image
 task push-ui-prd      # push UI image
-task stamp-prd        # write version into envs/prd/kustomization.yaml
-task apply-prd        # kubectl apply
-task rollout-prd      # wait for rollout
 task git-tag          # commit + tag
+task stamp-prd        # write version into private-ops kio/kio/kustomization.yaml
+task rollout-prd      # (optional) restart kio-api and wait — ArgoCD normally does this
 ```
 
 ---
@@ -126,35 +147,27 @@ Builds and pushes `kio-api:dev-latest` and `kio-ui:dev-latest`, applies `kuberne
 
 ## Rollback
 
-Because every prod release is tagged with an exact version in Harbor and recorded in `kustomization.yaml` git history, rolling back is straightforward.
-
-### Roll back to a previous version
-
-```bash
-# Edit envs/prd/kustomization.yaml and set newTag to the target version
-# Or use kustomize:
-cd kubernetes-manifests/envs/prd
-kustomize edit set image your-registry.example.com/your-org/kio-api:0.1.0
-kustomize edit set image your-registry.example.com/your-org/kio-ui:0.1.0
-
-# Apply and roll out
-task apply-prd
-task rollout-prd
-```
-
-### Roll back using git
+Every prod release is an immutable tag in Harbor and a `vX.Y.Z` tag here, so rolling back
+is a one-file change in private-ops:
 
 ```bash
-git checkout v0.1.0 -- kubernetes-manifests/envs/prd/kustomization.yaml
-task apply-prd
-task rollout-prd
+cd ../private-ops
+# From kio: writes ?ref= and both newTags for the target version
+(cd ../kio && task stamp-prd VERSION=0.1.0)
+git add kio/kio/kustomization.yaml
+git commit -m "chore(kio): roll back kio to v0.1.0"
+git push origin main
 ```
+
+ArgoCD re-syncs and re-runs `kio-migrate` for that tag. Alembic is a no-op for
+revisions already applied, but it will **not** undo a newer migration — if the release
+being rolled back added one, run `alembic downgrade <rev>` against the DB first.
 
 ---
 
 ## What gets deployed
 
-The `kustomize build kubernetes-manifests/envs/prd/` output includes:
+The `kustomize build kio/kio` output (in private-ops) includes:
 
 - `kio-api` Deployment + Service (FastAPI, port 8000)
 - `kio-ui` Deployment + Service (nginx, port 80)
