@@ -3,15 +3,15 @@ name = "kio-api"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.30.0",
-    "sqlalchemy[asyncio]>=2.0.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.4",
+    "sqlalchemy[asyncio]>=2.0.52",
     "asyncpg>=0.29.0",
-    "alembic>=1.13.0",
-    "pydantic-settings>=2.14.2",
+    "alembic>=1.19.1",
+    "pydantic-settings>=2.15.0",
     "paho-mqtt>=2.0.0",
     "PyJWT>=2.8.0",
-    "cryptography>=50.0.0",
+    "cryptography>=50.0.1",
     "httpx>=0.27.0",
 ]
 
@@ -24,11 +24,11 @@ packages = ["app"]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.1.1",
     "pytest-asyncio>=0.24",
     "httpx>=0.27.0",
     "black>=24.0",
-    "ruff>=0.4.4",
+    "ruff>=0.16.4",
 ]
 
 [tool.pytest.ini_options]
