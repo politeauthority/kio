@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.2](https://github.com/politeauthority/kio/compare/v0.7.1...v0.7.2) (2026-08-29)
+
+
+* force release v0.7.2 ([71d12b1](https://github.com/politeauthority/kio/commit/71d12b12fb3f7adcee557199430acae7ca509caf))
+
 ## [0.7.1](https://github.com/politeauthority/kio/compare/v0.7.0...v0.7.1) (2026-08-29)
 
 
