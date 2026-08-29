@@ -42,17 +42,20 @@ HA 2026.8 migrated the `http:` YAML block into `.storage/http` (the
 `yaml_migration_done: true` flag). Any `http:` block left in YAML is ignored
 after that migration, so `configuration.yaml` on the box no longer has one.
 
-The auth block, per kiosk IP, mapped to the non-admin `Kiosk` user
-(`1ecac21d0753490ab61aa3fa9fb3bf78`):
+The auth block trusts the whole LAN. HA filters the user list by the most
+specific `trusted_users` entry that matches the client, so the three kiosk
+IPs resolve to exactly one user, the non-admin `Kiosk`
+(`1ecac21d0753490ab61aa3fa9fb3bf78`), and `allow_bypass_login` logs them in
+with no page shown. Any other LAN client gets a user picker (Alix, Eric,
+Kiosk, Robbi, Guest, ...) in place of the password prompt. The k8s node IPs
+sit inside the `/24` but are HTTP `trusted_proxies`, so check 3 excludes them.
 
 ```yaml
 homeassistant:
   auth_providers:
     - type: trusted_networks
       trusted_networks:
-        - 192.168.50.8/32     # Living Room Tv
-        - 192.168.50.107/32   # Office
-        - 192.168.50.161/32   # Lil Tv
+        - 192.168.50.0/24
       trusted_users:
         192.168.50.8/32:   ["1ecac21d0753490ab61aa3fa9fb3bf78"]
         192.168.50.107/32: ["1ecac21d0753490ab61aa3fa9fb3bf78"]
@@ -91,8 +94,9 @@ and check 3 above rejected all of them.
 
 Fix:
 
-1. Narrow `trusted_networks` to the three kiosk IPs (private-ops
-   `fix/ha-trusted-networks`), `scp` the file to `/config/`, `ha core check`.
+1. Map the three kiosk IPs to the Kiosk user in `trusted_users` (private-ops
+   `fix/ha-trusted-networks`), `scp` the file to `/config/`, `ha core check`,
+   `ha core restart` (auth providers only load at startup).
 2. Replace `trusted_proxies` with the node IPs + pod CIDR through the
    websocket API. HA stages this as a **pending** config and restarts itself.
    If the pending config is not promoted within five minutes it reverts to the
@@ -148,8 +152,9 @@ curl -s -X POST http://192.168.50.10:8123/auth/login_flow \
 #   before the fix: {"type":"abort","reason":"not_allowed"}
 ```
 
-From a host *not* in the list (a laptop), step 1 must still show only
-`homeassistant`; nothing outside the kiosk IPs gets the passwordless path.
+From a LAN host that is not a kiosk (a laptop), step 2 must return
+`{"type":"form", ...}` with the user list, never `create_entry`: only the
+kiosk IPs get the no-click path.
 
 End to end: navigate a kiosk from the kio dashboard (or the HA `kio.navigate`
 service) to `http://192.168.50.10:8123/lovelace/0`, then confirm on the Pi that
@@ -168,7 +173,8 @@ public hostname is hairpin-NATed by the router and shows up in HA's logs as
 
 ### Results, 2026-08-28
 
-- Mac (`192.168.50.150`): `/auth/providers` lists only `homeassistant`.
+- Mac (`192.168.50.150`): `/auth/providers` lists `trusted_networks`; the
+  login flow returns a `form` with the user picker, not an auto-login.
 - Living Room Tv (`192.168.50.8`): lists `trusted_networks`; `login_flow`
   returns `create_entry` with an auth code.
 - `https://ha.squid-ink.us/auth/providers` returns 200 through traefik.
@@ -188,5 +194,11 @@ public hostname is hairpin-NATed by the router and shows up in HA's logs as
 - Use the **internal** URL on kiosks. Through `ha.squid-ink.us` HA sees the
   kiosk's IP only via `X-Forwarded-For`, which works, but adds a public
   round-trip for a LAN device.
-- For a clean full-screen dashboard install the HACS `kiosk-mode` plugin and
-  append `?kiosk` to the URL.
+- `kiosk-mode` v14.1.0 (NemesisRE/kiosk-mode) is installed through HACS
+  (`hacs/repository/download`, repository id `497319128`); HACS registered the
+  Lovelace resource `/hacsfiles/kiosk-mode/kiosk-mode.js` itself. Append
+  `?kiosk` to a dashboard URL to hide the header and sidebar. Use the real
+  dashboard path (`/home/overview?kiosk`): HA redirects `/lovelace/0` to it and
+  drops the query string on the way. For a setting that needs no URL param,
+  put `kiosk_mode: user_settings: [{users: [Kiosk], kiosk: true}]` in the
+  dashboard config (private-ops `dashboards/`).
