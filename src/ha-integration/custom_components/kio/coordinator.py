@@ -1,5 +1,7 @@
 import logging
+import os
 import socket
+import ssl
 from datetime import timedelta
 from urllib.parse import urlparse
 
@@ -8,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import CONF_API_IP, CONF_API_KEY, CONF_API_URL, DOMAIN
+from .const import CONF_API_IP, CONF_API_KEY, CONF_API_URL, CONF_CA_CERT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=30)
@@ -31,7 +33,36 @@ class _StaticResolver(aiohttp.abc.AbstractResolver):
         pass
 
 
-def _make_session(api_url: str = "", api_ip: str = "") -> aiohttp.ClientSession:
+def ca_cert_path(hass: HomeAssistant, ca_cert: str) -> str:
+    """Absolute path of the configured CA file ("" when none). A relative path
+    is taken from the HA config dir, so presets can say `certs/foo.crt`."""
+    ca_cert = (ca_cert or "").strip()
+    if not ca_cert or os.path.isabs(ca_cert):
+        return ca_cert
+    return hass.config.path(ca_cert)
+
+
+def _ssl_context(ca_cert: str) -> ssl.SSLContext | None:
+    """Trust store for the kio API: the system CAs plus the PEM at `ca_cert`.
+
+    None means "just the system CAs". A missing file also yields None, with a
+    warning, so an install pointed at a publicly-signed API keeps working
+    without the file. This reads from disk — call it from an executor, never
+    on the event loop.
+    """
+    if not ca_cert:
+        return None
+    if not os.path.isfile(ca_cert):
+        _LOGGER.warning("kio CA certificate %s not found; using the system trust store only", ca_cert)
+        return None
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(cafile=ca_cert)
+    return ctx
+
+
+def _make_session(
+    api_url: str = "", api_ip: str = "", ssl_context: ssl.SSLContext | None = None
+) -> aiohttp.ClientSession:
     if api_ip:
         hostname = urlparse(api_url).hostname or ""
         resolver = _StaticResolver(hostname, api_ip)
@@ -39,7 +70,10 @@ def _make_session(api_url: str = "", api_ip: str = "") -> aiohttp.ClientSession:
         # Use ThreadedResolver (Python stdlib getaddrinfo) to avoid c-ares
         # appending the .local.hass.io search domain before the bare hostname.
         resolver = aiohttp.ThreadedResolver()
-    connector = aiohttp.TCPConnector(resolver=resolver)
+    # Leave aiohttp's default (verify with the system CAs) alone unless we have
+    # a context with the extra CA loaded.
+    ssl_kw = {"ssl": ssl_context} if ssl_context is not None else {}
+    connector = aiohttp.TCPConnector(resolver=resolver, **ssl_kw)
     return aiohttp.ClientSession(connector=connector)
 
 
@@ -48,6 +82,11 @@ class KioCoordinator(DataUpdateCoordinator):
         self.api_url = entry.data[CONF_API_URL].rstrip("/")
         self.api_key = entry.data.get(CONF_API_KEY, "")
         self.api_ip = entry.data.get(CONF_API_IP, "")
+        self.ca_cert = ca_cert_path(hass, entry.data.get(CONF_CA_CERT, ""))
+        # Built once, off the loop, the first time we talk to the API; None
+        # when no CA is configured (or its file is missing).
+        self._ssl_context: ssl.SSLContext | None = None
+        self._ssl_ready = not self.ca_cert
         # One session per coordinator, created lazily on the event loop and
         # reused across polls and commands (closed in async_unload_entry).
         self._session_obj: aiohttp.ClientSession | None = None
@@ -64,9 +103,14 @@ class KioCoordinator(DataUpdateCoordinator):
             h["X-API-Key"] = self.api_key
         return h
 
+    async def _ensure_ssl(self) -> None:
+        if not self._ssl_ready:
+            self._ssl_context = await self.hass.async_add_executor_job(_ssl_context, self.ca_cert)
+            self._ssl_ready = True
+
     def _session(self) -> aiohttp.ClientSession:
         if self._session_obj is None or self._session_obj.closed:
-            self._session_obj = _make_session(self.api_url, self.api_ip)
+            self._session_obj = _make_session(self.api_url, self.api_ip, self._ssl_context)
         return self._session_obj
 
     async def async_close(self) -> None:
@@ -75,6 +119,7 @@ class KioCoordinator(DataUpdateCoordinator):
             self._session_obj = None
 
     async def _async_update_data(self) -> dict:
+        await self._ensure_ssl()
         try:
             async with self._session().get(
                 f"{self.api_url}/kiosks", headers=self._headers, timeout=_TIMEOUT
@@ -106,6 +151,7 @@ class KioCoordinator(DataUpdateCoordinator):
 
         path is relative to the API root, e.g. f"/kiosks/{id}/command".
         """
+        await self._ensure_ssl()
         async with self._session().request(
             method, f"{self.api_url}{path}", json=json, headers=self._headers, timeout=_TIMEOUT
         ) as resp:

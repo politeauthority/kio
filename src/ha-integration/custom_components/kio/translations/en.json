@@ -7,13 +7,15 @@
           "environment": "Environment",
           "api_url": "API URL",
           "api_key": "API Key",
-          "api_ip": "API IP Override"
+          "api_ip": "API IP Override",
+          "ca_cert": "CA certificate"
         },
         "data_description": {
           "environment": "Pick prod or staging to fill the URL automatically, or 'custom' to enter your own.",
-          "api_url": "Only for 'custom' — base URL of your kio API, e.g. http://api.kio.example.local",
+          "api_url": "Only for 'custom' — base URL of your kio API, e.g. https://api.kio.example.local",
           "api_key": "API key (X-API-Key) for the chosen environment. Leave blank if auth is disabled.",
-          "api_ip": "Only for 'custom'. If HA cannot resolve the hostname (.int TLD DNS issue), enter the server IP here."
+          "api_ip": "Only for 'custom'. If HA cannot resolve the hostname (.int TLD DNS issue), enter the server IP here.",
+          "ca_cert": "Only for 'custom'. PEM file to trust in addition to the system CAs when the API uses a private CA — a path relative to the Home Assistant config directory (e.g. certs/my-ca.crt) or absolute."
         }
       },
       "reconfigure": {
@@ -23,13 +25,15 @@
           "environment": "Environment",
           "api_url": "API URL",
           "api_key": "API Key",
-          "api_ip": "API IP Override"
+          "api_ip": "API IP Override",
+          "ca_cert": "CA certificate"
         },
         "data_description": {
           "environment": "Choose prod or staging to switch source of truth; 'custom' to enter your own URL.",
           "api_url": "Only for 'custom' — base URL of your kio API.",
           "api_key": "API key (X-API-Key) for the chosen environment. Leave blank if auth is disabled.",
-          "api_ip": "Only for 'custom'. If HA cannot resolve the hostname, enter the server IP here."
+          "api_ip": "Only for 'custom'. If HA cannot resolve the hostname, enter the server IP here.",
+          "ca_cert": "Only for 'custom'. PEM file to trust in addition to the system CAs (path relative to the config directory, or absolute)."
         }
       }
     },
