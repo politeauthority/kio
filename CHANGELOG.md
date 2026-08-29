@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/politeauthority/kio/compare/v0.9.1...v0.9.2) (2026-08-29)
+
+
+### Bug Fixes
+
+* **agent:** give nodes fallback DNS resolvers so a Pi-hole blip doesn't blank every kiosk ([#72](https://github.com/politeauthority/kio/issues/72)) ([6249524](https://github.com/politeauthority/kio/commit/624952494da6a6c9ab7501845183c5e03061abe1))
+
 ## [0.9.1](https://github.com/politeauthority/kio/compare/v0.9.0...v0.9.1) (2026-08-29)
 
 
