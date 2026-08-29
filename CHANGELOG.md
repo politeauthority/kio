@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.4](https://github.com/politeauthority/kio/compare/v0.7.3...v0.7.4) (2026-08-29)
+
+
+### Dependencies
+
+* bump the ui-deps group across 1 directory with 3 updates ([#33](https://github.com/politeauthority/kio/issues/33)) ([cf00cee](https://github.com/politeauthority/kio/commit/cf00ceed51df5c56baf0863534b27facb3bf8185))
+
 ## [0.7.3](https://github.com/politeauthority/kio/compare/v0.7.2...v0.7.3) (2026-08-29)
 
 
