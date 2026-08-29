@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.5](https://github.com/politeauthority/kio/compare/v0.7.4...v0.7.5) (2026-08-29)
+
+
+### Bug Fixes
+
+* **auth:** assign an RS256 signing key when setting up the Authentik provider ([#45](https://github.com/politeauthority/kio/issues/45)) ([ba21a53](https://github.com/politeauthority/kio/commit/ba21a5333386806973011d2a77abfac219d34549))
+
 ## [0.7.4](https://github.com/politeauthority/kio/compare/v0.7.3...v0.7.4) (2026-08-29)
 
 
