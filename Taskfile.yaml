@@ -203,10 +203,17 @@ tasks:
         docker buildx create --use --driver docker-container --driver-opt image=moby/buildkit:v0.17.3 --name ci-builder-bk0173 --bootstrap 2>/dev/null || docker buildx use ci-builder-bk0173
         # Harbor tags are immutable, and a release is retried from the same commit if a
         # previous run failed part-way — so skip any image whose tag already exists.
+        # BuildKit layer cache lives in Harbor next to the images (:buildcache tags):
+        # the buildx builder is ephemeral on the ARC runners, so without it every
+        # release re-runs uv sync / npm ci from scratch. A missing cache ref is only
+        # a warning on the first run.
+        CACHE_API="type=registry,ref={{.IMAGE}}:buildcache,image-manifest=true,oci-mediatypes=true"
+        CACHE_UI="type=registry,ref={{.IMAGE_UI}}:buildcache,image-manifest=true,oci-mediatypes=true"
         if docker manifest inspect "{{.IMAGE}}:${VERSION}" >/dev/null 2>&1; then
           echo "::warning::{{.IMAGE}}:${VERSION} already exists in Harbor — skipping (built from the same commit)."
         else
           docker buildx build --platform linux/amd64 --target production --build-arg VERSION=${VERSION} \
+            --cache-from "${CACHE_API}" --cache-to "${CACHE_API},mode=max" \
             -f docker/Dockerfile.api --push \
             -t {{.IMAGE}}:${VERSION} -t {{.IMAGE}}:latest .
         fi
@@ -214,6 +221,7 @@ tasks:
           echo "::warning::{{.IMAGE_UI}}:${VERSION} already exists in Harbor — skipping (built from the same commit)."
         else
           docker buildx build --platform linux/amd64 \
+            --cache-from "${CACHE_UI}" --cache-to "${CACHE_UI},mode=max" \
             -f docker/Dockerfile.ui --push \
             -t {{.IMAGE_UI}}:${VERSION} -t {{.IMAGE_UI}}:latest .
         fi
@@ -226,8 +234,11 @@ tasks:
         set -euo pipefail
         # Same pinned builder as ci-build-push (see that task's comment).
         docker buildx create --use --driver docker-container --driver-opt image=moby/buildkit:v0.17.3 --name ci-builder-bk0173 --bootstrap 2>/dev/null || docker buildx use ci-builder-bk0173
-        docker buildx build --platform linux/amd64 --target production -f docker/Dockerfile.api --output type=cacheonly .
-        docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui --output type=cacheonly .
+        # Read the release cache from Harbor (never written here — pull-only credentials).
+        docker buildx build --platform linux/amd64 --target production -f docker/Dockerfile.api \
+          --cache-from "type=registry,ref={{.IMAGE}}:buildcache" --output type=cacheonly .
+        docker buildx build --platform linux/amd64 -f docker/Dockerfile.ui \
+          --cache-from "type=registry,ref={{.IMAGE_UI}}:buildcache" --output type=cacheonly .
         echo "Both images build cleanly (nothing pushed)"
 
   test:api:

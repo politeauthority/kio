@@ -62,6 +62,18 @@ are often arm64 (Apple Silicon).
 
 ---
 
+## What runs when
+
+| Change touches… | Tests (lint + API + pi-agent) | HA integration | Release |
+|---|---|---|---|
+| `src/api/**`, `src/pi-agent/**`, `tests/pi-agent/**`, `Taskfile.yaml` | ✅ | — | on merge, if Conventional type is releasable |
+| `src/ha-integration/**` | — | ✅ | ″ |
+| `src/ui/**`, `docker/**` | — (no UI unit tests; opt-in `build-check` label builds the images) | — | ″ |
+| `docs/**`, `kubernetes-manifests/**`, `*.md`, dependabot config | nothing | nothing | `docs:`/`chore:` never release |
+
+Release image builds pull/push a BuildKit layer cache from Harbor (`kio-api:buildcache`,
+`kio-ui:buildcache`), so unchanged dependency layers are not rebuilt on every release.
+
 ## Environments
 
 | Env | Namespace | Image tag | API build target | Tests in image? |

@@ -4,18 +4,28 @@ name: Tests
 # checkout via the CI-contract Taskfile targets (`task lint`, `task test` = API
 # unit + pi-agent) — the same commands release-please.yaml runs before a release,
 # and the same commands you run on a laptop. Plain ubuntu runners: no DinD image
-# build, no registry credentials. The HA integration suite has its own job because
-# it pins a full homeassistant install.
+# build, no registry credentials.
 #
-# Environment-dependent e2e tests (task test:e2e:*) are intentionally excluded —
-# they need a live deployment (staging is deployed by hand: docs/dev/staging.md).
+# Only runs when something these suites actually consume changed (the API, the
+# pi-agent and its tests, the Taskfile, or this workflow). Docs, k8s manifests,
+# the UI, Dockerfiles, dependabot config etc. don't trigger it. The HA integration
+# suite lives in ha-integration.yaml (filtered to src/ha-integration/**), and the
+# environment-dependent e2e tests (task test:e2e:*) need a live deployment
+# (staging is deployed by hand: docs/dev/staging.md).
 
 on:
   pull_request:
     branches: [main, staging]
+    paths: &test-paths
+      - "src/api/**"
+      - "src/pi-agent/**"
+      - "tests/pi-agent/**"
+      - "Taskfile.yaml"
+      - ".github/workflows/tests.yaml"
   # Also on main itself so the README status badge reflects the default branch.
   push:
     branches: [main]
+    paths: *test-paths
 
 concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
@@ -63,31 +73,3 @@ jobs:
             echo "> 📊 \`${lines:-see job logs}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  ha-integration:
-    name: HA integration tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src/ha-integration
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
-        with:
-          enable-cache: true
-      - name: Run tests
-        id: test
-        run: |
-          set -o pipefail
-          uv run --with-requirements requirements_test.txt pytest -q 2>&1 | tee /tmp/ha.txt
-      - name: 📋 Summary
-        if: always()
-        run: |
-          line=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/ha.txt | tail -1 || true)
-          if [ "${{ steps.test.outcome }}" = "success" ]; then head="### ✅ 🏠 HA integration tests passed"; else head="### ❌ 🏠 HA integration tests failed"; fi
-          {
-            echo "$head"
-            echo ""
-            echo "🧩 Home Assistant custom-component suite (config flow + entity setup)"
-            echo ""
-            echo "> 📊 \`${line:-see job logs}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
