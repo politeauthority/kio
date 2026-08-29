@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.9](https://github.com/politeauthority/kio/compare/v0.7.8...v0.7.9) (2026-08-29)
+
+
+### Bug Fixes
+
+* **ha:** show kio's input names and hide hidden inputs in the display select ([#57](https://github.com/politeauthority/kio/issues/57)) ([c008ca9](https://github.com/politeauthority/kio/commit/c008ca9fd24f5c0713136247d6ca11c47a79c710))
+
 ## [0.7.8](https://github.com/politeauthority/kio/compare/v0.7.7...v0.7.8) (2026-08-29)
 
 
