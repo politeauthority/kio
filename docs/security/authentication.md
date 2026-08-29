@@ -71,14 +71,24 @@ What it configures:
 | Client type | Public — Authorization Code + PKCE, no client secret |
 | Redirect URIs | one `/callback` URL per kio environment (strict match) |
 | Scopes | `openid profile email offline_access` |
+| Signing key | `authentik Self-signed Certificate` (override with `AUTHENTIK_SIGNING_KEY`) — RS256 |
 | Access token validity | 24h |
 
 `offline_access` is what lets the UI get a refresh token and renew the session in
 the background; without it users get bounced through Authentik whenever the
 access token expires.
 
-Re-running the script is safe — it syncs the redirect URIs and scopes on the
-existing provider.
+The signing key matters: a provider with no certificate assigned issues **HS256**
+tokens, and the API refuses those from Authentik on purpose (HS256 is reserved for
+the dev login, so the two can never be confused). If the discovery document shows
+`"id_token_signing_alg_values_supported": ["HS256"]`, the key isn't set.
+
+Re-running the script is safe — it syncs the redirect URIs, scopes and signing key
+on the existing provider (found through the `kio` application, so a provider that
+was created by hand is updated rather than duplicated).
+
+In production the API config lives in private-ops (`kio/kio/api-configmap-patch.yaml`);
+ArgoCD applies it.
 
 **Who can sign in** is Authentik's job: bind a group or policy to the `kio`
 application. kio trusts any user whose token Authentik issues for this client.

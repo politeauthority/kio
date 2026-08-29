@@ -10,6 +10,13 @@ Create one with intent "API" for your admin user.
 
 Environment:
     AUTHENTIK_URL      Base URL of Authentik (default https://auth.example.com)
+    AUTHENTIK_SIGNING_KEY
+                       Name of the certificate-key pair the provider signs tokens
+                       with (default "authentik Self-signed Certificate"). Must
+                       have a private key. Without a signing key Authentik issues
+                       HS256 tokens, which the kio API rejects — it only accepts
+                       RS*/ES* from Authentik so a dev HS256 token can never be
+                       confused with one.
     KIO_REDIRECT_URIS  Comma-separated allowed redirect URIs, one per kio
                        environment, e.g.
                        https://kio.example.com/callback,https://stg.kio.example.com/callback
@@ -19,8 +26,8 @@ After running, set the printed AUTHENTIK_ISSUER / AUTHENTIK_CLIENT_ID on the
 kio API (kubernetes-manifests/envs/<env>/api-configmap-patch.yaml) and
 re-apply: kubectl apply -k kubernetes-manifests/envs/<env>/
 
-Re-running is safe: an existing provider has its redirect URIs and scopes
-brought up to date; nothing else is changed.
+Re-running is safe: an existing provider has its redirect URIs, scopes and
+signing key brought up to date; nothing else is changed.
 """
 
 import argparse
@@ -32,6 +39,7 @@ import urllib.parse
 import urllib.request
 
 AUTHENTIK_URL = os.environ.get("AUTHENTIK_URL", "https://auth.example.com")
+SIGNING_KEY_NAME = os.environ.get("AUTHENTIK_SIGNING_KEY", "authentik Self-signed Certificate")
 APP_SLUG = "kio"
 APP_NAME = "kio Kiosk Manager"
 REDIRECT_URIS = [
@@ -83,16 +91,63 @@ def _find_scope_pks(token):
     return None
 
 
-def find_or_create_provider(token):
+def _find_signing_key(token):
+    """Return the pk of the certificate-key pair the provider should sign with.
+
+    Prefers the pair named by AUTHENTIK_SIGNING_KEY; falls back to any pair
+    that has a private key. Returns None (with a warning) if there is none —
+    the provider would then issue HS256 tokens the kio API refuses.
+    """
+    try:
+        r = api(token, "GET", "/crypto/certificatekeypairs/", params={"has_key": "true"})
+    except urllib.error.HTTPError:
+        return None
+    pairs = _results(r)
+    for pair in pairs:
+        if pair.get("name") == SIGNING_KEY_NAME:
+            return pair["pk"]
+    if pairs:
+        print(
+            f"  WARNING: no certificate named {SIGNING_KEY_NAME!r}; signing with {pairs[0]['name']!r} instead",
+            file=sys.stderr,
+        )
+        return pairs[0]["pk"]
+    print(
+        "  WARNING: Authentik has no certificate-key pair with a private key — the "
+        "provider will sign HS256 tokens, which the kio API does not accept. Create "
+        "one under Admin → System → Certificates and re-run.",
+        file=sys.stderr,
+    )
+    return None
+
+
+def _existing_provider(token):
+    """The provider already attached to the kio application, else one matching
+    APP_NAME. Looking through the application first means a provider that was
+    created by hand under a different name is updated rather than duplicated."""
+    result = api(token, "GET", "/core/applications/", params={"slug": APP_SLUG})
+    hits = _results(result)
+    if hits and hits[0].get("provider"):
+        try:
+            return api(token, "GET", f"/providers/oauth2/{hits[0]['provider']}/")
+        except urllib.error.HTTPError:
+            pass  # attached provider isn't OAuth2 — fall through to a name match
     result = api(token, "GET", "/providers/oauth2/", params={"name": APP_NAME})
     hits = _results(result)
-    if hits:
-        p = hits[0]
-        print(f"  Provider already exists (pk={p['pk']}) — syncing redirect URIs and scopes")
+    return hits[0] if hits else None
+
+
+def find_or_create_provider(token):
+    signing_key = _find_signing_key(token)
+    p = _existing_provider(token)
+    if p:
+        print(f"  Provider already exists (pk={p['pk']}, {p.get('name')!r}) — syncing redirect URIs, scopes and signing key")
         patch = {"redirect_uris": _redirect_uris()}
         scope_pks = _find_scope_pks(token)
         if scope_pks is not None:
             patch["property_mappings"] = scope_pks
+        if signing_key is not None:
+            patch["signing_key"] = signing_key
         return api(token, "PATCH", f"/providers/oauth2/{p['pk']}/", patch)
 
     invalidation_flow = _get_default_invalidation_flow(token)
@@ -103,6 +158,8 @@ def find_or_create_provider(token):
         "authorization_flow": _get_default_auth_flow(token),
         "access_token_validity": "hours=24",
     }
+    if signing_key is not None:
+        body["signing_key"] = signing_key
     if invalidation_flow:
         body["invalidation_flow"] = invalidation_flow
     scope_pks = _find_scope_pks(token)
@@ -197,6 +254,10 @@ def main():
     print()
     print(f"  AUTHENTIK_ISSUER     = {issuer}")
     print(f"  AUTHENTIK_CLIENT_ID  = {client_id}")
+    print(f"  AUTHENTIK_DISPLAY_NAME = Authentik   # optional, login button label")
+    print()
+    print("Verify the provider signs asymmetrically (must NOT be HS256):")
+    print(f"  curl -s {issuer}.well-known/openid-configuration | grep id_token_signing_alg")
     print()
     print("Edit kubernetes-manifests/envs/<env>/api-configmap-patch.yaml, then:")
     print("  kubectl apply -k kubernetes-manifests/envs/<env>/")
