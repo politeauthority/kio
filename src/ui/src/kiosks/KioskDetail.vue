@@ -549,6 +549,9 @@ const pendingRefreshTabs = ref({})
 // the close→reappear→close flicker.
 const pendingCloseTabs = ref({})
 let sse = null
+let sseReconnectTimer = null
+let sseReconnectDelay = 1000
+let sseClosed = false  // set on unmount so a pending reconnect doesn't reopen the stream
 let logPollInterval = null
 let countdownInterval = null
 let pollInterval = null
@@ -839,15 +842,30 @@ async function connectSSE() {
   // EventSource can't send an Authorization header, so we exchange our bearer
   // token for a short-lived single-use ticket (kept out of access logs) and
   // pass that in the query string instead.
+  if (sseClosed) return
+  if (sse) { sse.close(); sse = null }
   const base = `${API_URL}/kiosks/${kioskId.value}/sse`
   let url = base
   try {
     const { ticket } = await apiFetch(`/kiosks/${kioskId.value}/sse-ticket`, { method: 'POST' })
     if (ticket) url = `${base}?ticket=${encodeURIComponent(ticket)}`
   } catch {
-    return  // not authorized / fetch failed — skip the stream rather than leak a token
+    // Not authorized / fetch failed — skip the stream rather than leak a token.
+    // The API may just be restarting (every release rolls the pod); try again
+    // later so the live view comes back on its own.
+    scheduleSSEReconnect()
+    return
   }
   sse = new EventSource(url)
+  sse.onopen = () => { sseReconnectDelay = 1000 }
+  sse.onerror = () => {
+    // The ticket is single-use and lives in the API's memory, so the browser's
+    // built-in reconnect (same URL) is refused with a 401 — after a pod restart
+    // the stream would stay dead until a page reload. Drop this EventSource and
+    // open a new one with a fresh ticket, backing off while the API is down.
+    if (sse) { sse.close(); sse = null }
+    scheduleSSEReconnect()
+  }
   sse.addEventListener('status', e => {
     try {
       const data = JSON.parse(e.data)
@@ -862,6 +880,15 @@ async function connectSSE() {
       if (kiosk.value) kiosk.value.last_seen = new Date().toISOString()
     } catch {}
   })
+}
+
+function scheduleSSEReconnect() {
+  if (sseClosed || sseReconnectTimer) return
+  sseReconnectTimer = setTimeout(() => {
+    sseReconnectTimer = null
+    connectSSE()
+  }, sseReconnectDelay)
+  sseReconnectDelay = Math.min(sseReconnectDelay * 2, 30000)
 }
 
 async function confirmReboot() {
@@ -1420,6 +1447,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  sseClosed = true
+  clearTimeout(sseReconnectTimer)
   if (sse) sse.close()
   clearInterval(logPollInterval)
   clearInterval(countdownInterval)
