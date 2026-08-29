@@ -3,8 +3,8 @@ from homeassistant import config_entries, data_entry_flow
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.kio.config_flow import CONF_ENV, ENV_PRESETS
-from custom_components.kio.const import CONF_API_KEY, CONF_API_URL, DOMAIN
+from custom_components.kio.config_flow import CA_CERT_PRESET, CONF_ENV, ENV_PRESETS
+from custom_components.kio.const import CONF_API_KEY, CONF_API_URL, CONF_CA_CERT, DOMAIN
 
 API = "http://kio.test"
 PROD = ENV_PRESETS["prod"][CONF_API_URL].rstrip("/")
@@ -27,6 +27,22 @@ async def test_user_flow_custom_env(hass: HomeAssistant) -> None:
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_API_URL] == API
     assert result["data"][CONF_ENV] == "custom"
+    assert result["data"][CONF_CA_CERT] == ""
+
+
+async def test_user_flow_custom_env_keeps_ca_cert(hass: HomeAssistant) -> None:
+    with aioresponses() as m:
+        m.get(f"{API}/kiosks", payload=[], repeat=True)
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_ENV: "custom", CONF_API_URL: API, CONF_CA_CERT: " certs/my-ca.crt "}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_CA_CERT] == "certs/my-ca.crt"
 
 
 async def test_user_flow_prod_preset_fills_url(hass: HomeAssistant) -> None:
@@ -43,6 +59,7 @@ async def test_user_flow_prod_preset_fills_url(hass: HomeAssistant) -> None:
 
     assert result["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_API_URL] == PROD
+    assert result["data"][CONF_CA_CERT] == CA_CERT_PRESET
     assert result["title"] == "kio (prod)"
 
 
@@ -83,4 +100,5 @@ async def test_reconfigure_switches_environment(hass: HomeAssistant) -> None:
     assert entry.data[CONF_API_URL] == PROD
     assert entry.data[CONF_ENV] == "prod"
     assert entry.data[CONF_API_KEY] == "prod-key"
+    assert entry.data[CONF_CA_CERT] == CA_CERT_PRESET
     assert entry.unique_id == PROD

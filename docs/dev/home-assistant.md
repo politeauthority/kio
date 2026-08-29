@@ -82,7 +82,8 @@ After the first `task ha:deploy` and HA restart:
    - **prod** / **staging** — auto-fills that environment's API URL and the shared
      private-gateway IP override; you just enter that env's **API key**.
    - **custom** — enter your own **API URL** (and an **API IP Override** if HA
-     can't resolve the hostname, e.g. the `.int` TLD).
+     can't resolve the hostname, e.g. the `.int` TLD, plus a **CA certificate**
+     path if the API's cert comes from a private CA).
 4. Submit — HA validates by calling `GET /kiosks`
 
 All registered kiosks appear as Devices immediately.
@@ -93,9 +94,31 @@ All registered kiosks appear as Devices immediately.
 
 The integration can mirror either environment as its source of truth. The env
 preset lives in both the add and **Reconfigure** flows (`config_flow.py`,
-`ENV_PRESETS`): choosing `prod`/`staging` fills the URL + the shared gateway IP
-(`192.168.50.81` — both envs sit behind the same private nginx gateway with
-host-based routing), so switching is just a dropdown + that env's API key.
+`ENV_PRESETS`): choosing `prod`/`staging` fills the URL, the shared gateway IP
+(`192.168.50.85` — both envs sit behind the same private Traefik gateway with
+host-based routing) and the CA file (`certs/colfax-private-ca.crt` under the HA
+config dir), so switching is just a dropdown + that env's API key.
+
+### Trusting the private CA
+
+The gateway's certs are issued by `colfax-private-ca`, which HA's Python trust
+store doesn't know, so without the CA file every poll fails with
+`CERTIFICATE_VERIFY_FAILED` and the entry sits in *setup retry*. The coordinator
+loads the PEM at `ca_cert` (built off the event loop, once) alongside the system
+CAs; a missing file logs a warning and falls back to the system CAs only, so
+nothing breaks for an install whose API has a public cert.
+
+Put the current CA on the HA box (it rotated on 2026-08-20; re-copy if it
+rotates again — the entry then just needs a reload):
+
+```bash
+kubectl get secret -n cert-manager private-ca -o jsonpath='{.data.tls\.crt}' | base64 -d > /tmp/colfax-private-ca.crt
+ssh home-assistant "mkdir -p /config/certs"
+scp /tmp/colfax-private-ca.crt home-assistant:/config/certs/colfax-private-ca.crt
+```
+
+Entries created before `ca_cert` existed have no value for it — run
+**Reconfigure**, re-pick the environment, and submit to pick up the preset.
 
 **To flip in place:** **Settings → Devices & Services → kio → ⋮ → Reconfigure →
 Environment** → pick the other env → enter its API key → Submit. The entry
