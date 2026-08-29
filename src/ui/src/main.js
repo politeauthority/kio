@@ -18,6 +18,7 @@ import UrlEdit from './urls/UrlEdit.vue'
 import SettingsIndex from './settings/SettingsIndex.vue'
 import SettingsFeatureFlags from './settings/SettingsFeatureFlags.vue'
 import SettingsAgents from './settings/SettingsAgents.vue'
+import SettingsRetention from './settings/SettingsRetention.vue'
 import SettingsApiKeys from './settings/SettingsApiKeys.vue'
 import SettingsTimingDefaults from './settings/SettingsTimingDefaults.vue'
 import SettingsDisplay from './settings/SettingsDisplay.vue'
@@ -47,6 +48,7 @@ const router = createRouter({
     { path: '/settings', component: SettingsIndex, meta: { title: 'Settings' } },
     { path: '/settings/feature-flags', component: SettingsFeatureFlags, meta: { title: 'Feature Flags' } },
     { path: '/settings/agents', component: SettingsAgents, meta: { title: 'Agents' } },
+    { path: '/settings/retention', component: SettingsRetention, meta: { title: 'Data retention' } },
     { path: '/settings/api-keys', component: SettingsApiKeys, meta: { title: 'API Keys' } },
     { path: '/settings/timing', component: SettingsTimingDefaults, meta: { title: 'Timing' } },
     { path: '/settings/display', component: SettingsDisplay, meta: { title: 'Display' } },
