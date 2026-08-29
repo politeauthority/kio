@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.8](https://github.com/politeauthority/kio/compare/v0.7.7...v0.7.8) (2026-08-29)
+
+
+### Bug Fixes
+
+* **ui:** keep the Authentik session across tabs and browser restarts ([#55](https://github.com/politeauthority/kio/issues/55)) ([13496ca](https://github.com/politeauthority/kio/commit/13496ca219139dfbbfd440bbf7624b615610775b))
+
 ## [0.7.7](https://github.com/politeauthority/kio/compare/v0.7.6...v0.7.7) (2026-08-29)
 
 
