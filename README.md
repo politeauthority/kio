@@ -1,5 +1,10 @@
 # kio
 
+[![Tests](https://img.shields.io/github/actions/workflow/status/politeauthority/kio/tests.yaml?branch=main&label=tests&logo=githubactions&logoColor=white)](https://github.com/politeauthority/kio/actions/workflows/tests.yaml)
+[![HA integration](https://img.shields.io/github/actions/workflow/status/politeauthority/kio/ha-integration.yaml?branch=main&label=HA%20integration&logo=homeassistant&logoColor=white)](https://github.com/politeauthority/kio/actions/workflows/ha-integration.yaml)
+[![Release Please](https://img.shields.io/github/actions/workflow/status/politeauthority/kio/release-please.yaml?branch=main&label=release&logo=githubactions&logoColor=white)](https://github.com/politeauthority/kio/actions/workflows/release-please.yaml)
+[![Latest release](https://img.shields.io/github/v/release/politeauthority/kio?logo=github&label=version)](https://github.com/politeauthority/kio/releases/latest)
+
 kio is a self-hosted kiosk management platform for Raspberry Pi nodes. A central dashboard lets you monitor every kiosk in real time, push URL navigation, manage browser tabs, control display power, and switch HDMI inputs — all without touching the physical hardware.
 
 ## How it works
