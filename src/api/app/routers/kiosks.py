@@ -407,6 +407,39 @@ async def stop_playlist(
     await session.commit()
 
 
+@router.post("/{kiosk_id}/playlist/pause", status_code=204)
+async def pause_playlist(
+    kiosk_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Hold the playlist on its current item. The agent keeps the tabs (and their
+    refresh cadence) so resume is instant; `playlist_state.paused` flips true on
+    the next heartbeat."""
+    kiosk = await kiosk_service.get_by_id(session, kiosk_id)
+    if kiosk is None:
+        raise HTTPException(status_code=404, detail="Kiosk not found")
+    if kiosk.playlist_state is None:
+        raise HTTPException(status_code=400, detail="No playlist is playing on this kiosk")
+    dispatch_command(session, kiosk_id, command="pause_playlist", payload={"command": "pause_playlist"})
+    await session.commit()
+
+
+@router.post("/{kiosk_id}/playlist/resume", status_code=204)
+async def resume_playlist(
+    kiosk_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Continue a paused playlist from its current item (timer restarts). Only valid
+    while a playlist is loaded on the node; use /playlist/play to start one."""
+    kiosk = await kiosk_service.get_by_id(session, kiosk_id)
+    if kiosk is None:
+        raise HTTPException(status_code=404, detail="Kiosk not found")
+    if kiosk.playlist_state is None:
+        raise HTTPException(status_code=400, detail="No playlist is playing on this kiosk")
+    dispatch_command(session, kiosk_id, command="resume_playlist", payload={"command": "resume_playlist"})
+    await session.commit()
+
+
 # Default seconds between tab rotations when the node's tab_cycle meta omits an interval.
 DEFAULT_TAB_CYCLE_INTERVAL = 15
 

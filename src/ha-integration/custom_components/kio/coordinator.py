@@ -94,6 +94,9 @@ class KioCoordinator(DataUpdateCoordinator):
         # is {"id", "name", "url", ...}. Kept on the coordinator rather than in
         # `data` so the kiosk-keyed shape every entity reads stays as it is.
         self.saved_urls: list[dict] = []
+        # Playlists (GET /playlists), refreshed the same way; each is
+        # {"id", "name", "item_count", ...}. Source list for the media players.
+        self.playlists: list[dict] = []
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=SCAN_INTERVAL)
 
     @property
@@ -127,6 +130,7 @@ class KioCoordinator(DataUpdateCoordinator):
                 resp.raise_for_status()
                 kiosks = await resp.json()
             await self._refresh_saved_urls()
+            await self._refresh_playlists()
             return {k["id"]: k for k in kiosks}
         except aiohttp.ClientResponseError as err:
             raise UpdateFailed(f"kio API returned {err.status}") from err
@@ -145,6 +149,18 @@ class KioCoordinator(DataUpdateCoordinator):
             self.saved_urls = [r for r in rows if r.get("name") and r.get("url")]
         except Exception as err:  # noqa: BLE001 — logged, not raised
             _LOGGER.debug("Saved URL refresh failed, keeping previous list: %s", err)
+
+    async def _refresh_playlists(self) -> None:
+        """Best effort, like the saved URLs: a failure keeps the last list."""
+        try:
+            async with self._session().get(
+                f"{self.api_url}/playlists", headers=self._headers, timeout=_TIMEOUT
+            ) as resp:
+                resp.raise_for_status()
+                rows = await resp.json()
+            self.playlists = [r for r in rows if r.get("id") and r.get("name")]
+        except Exception as err:  # noqa: BLE001 — logged, not raised
+            _LOGGER.debug("Playlist refresh failed, keeping previous list: %s", err)
 
     async def _command(self, method: str, path: str, json: dict | None = None) -> None:
         """Send a write to the kio API, then pull fresh state immediately.
@@ -169,6 +185,25 @@ class KioCoordinator(DataUpdateCoordinator):
 
     async def set_brightness(self, kiosk_id: str, value: int) -> None:
         await self._command("PUT", f"/kiosks/{kiosk_id}/brightness", {"value": value})
+
+    # Playlist control (media_player). All are dedicated endpoints, not /command.
+    async def playlist_play(self, kiosk_id: str) -> None:
+        await self._command("POST", f"/kiosks/{kiosk_id}/playlist/play")
+
+    async def playlist_pause(self, kiosk_id: str) -> None:
+        await self._command("POST", f"/kiosks/{kiosk_id}/playlist/pause")
+
+    async def playlist_resume(self, kiosk_id: str) -> None:
+        await self._command("POST", f"/kiosks/{kiosk_id}/playlist/resume")
+
+    async def playlist_stop(self, kiosk_id: str) -> None:
+        await self._command("POST", f"/kiosks/{kiosk_id}/playlist/stop")
+
+    async def playlist_goto(self, kiosk_id: str, index: int) -> None:
+        await self._command("POST", f"/kiosks/{kiosk_id}/playlist/goto", {"index": index})
+
+    async def playlist_attach(self, kiosk_id: str, playlist_id: str) -> None:
+        await self._command("PUT", f"/kiosks/{kiosk_id}/playlist", {"playlist_id": playlist_id})
 
     async def update_agent(self, kiosk_id: str) -> None:
         # Dedicated endpoint, not the generic /command — the server injects the

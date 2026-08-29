@@ -216,10 +216,12 @@ class KioAgent:
             return False
 
         last_idx = playlist.get("last_idx") or 0
+        paused = bool(playlist.get("paused"))
         logger.info(
-            "Boot resume: waiting for Chromium, then resuming playlist '%s' at item %d",
+            "Boot resume: waiting for Chromium, then resuming playlist '%s' at item %d%s",
             playlist["name"],
             last_idx + 1,
+            " (paused)" if paused else "",
         )
         if not _wait_for_chromium():
             logger.warning("Boot resume: Chromium not ready, will retry playlist resume")
@@ -231,6 +233,7 @@ class KioAgent:
             playlist_name=playlist["name"],
             start_idx=last_idx,
             refresh_seconds=int(playlist.get("refresh_seconds", PLAYLIST_REFRESH_SECONDS)),
+            start_paused=paused,
         )
         return False
 
@@ -332,12 +335,18 @@ class KioAgent:
         playlist_name: str = "",
         start_idx: int = 0,
         refresh_seconds: int = PLAYLIST_REFRESH_SECONDS,
+        start_paused: bool = False,
     ) -> None:
         self._stop_playlist()
         # A playlist takes over tab rotation, so stop any manual tab cycle first.
         self._stop_tab_cycle()
         self._player = PlaylistPlayer(
-            playlist_id, items, playlist_name=playlist_name, start_idx=start_idx, refresh_seconds=refresh_seconds
+            playlist_id,
+            items,
+            playlist_name=playlist_name,
+            start_idx=start_idx,
+            refresh_seconds=refresh_seconds,
+            start_paused=start_paused,
         )
         self._player.start()
 

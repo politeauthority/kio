@@ -429,8 +429,9 @@ async def get_state(
     Two kinds of state survive a reboot here, both read from the values the last
     heartbeat stored before the node went down:
 
-    - `playlist`: a playlist, but only if it was actively playing (non-null
-      playlist_state). When present the agent resumes it and ignores `tabs`.
+    - `playlist`: a playlist, but only if it was loaded on the node (non-null
+      playlist_state), plus whether it was paused. When present the agent resumes
+      it and ignores `tabs`.
     - `tabs`: the web pages the node had open, so the agent can reopen them when
       no playlist is playing. The CDP target id is dropped (it doesn't survive a
       restart); only the url and which tab was focused matter for restore.
@@ -464,6 +465,9 @@ async def get_state(
                     for it in row.items
                 ],
                 "last_idx": kiosk.playlist_state.get("idx", 0),
+                # A playlist paused before the reboot comes back paused on the same
+                # item, instead of quietly rotating again.
+                "paused": bool(kiosk.playlist_state.get("paused")),
             }
 
     tab_cycle = None

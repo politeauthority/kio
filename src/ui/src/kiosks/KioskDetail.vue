@@ -10,8 +10,8 @@
           class="text-xs"
           style="display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; padding: 0.2rem 0.6rem; border-radius: var(--radius-sm); background: var(--accent-subtle, rgba(99,102,241,0.12)); color: var(--accent)"
         >
-          <span style="font-size: 0.7rem">●</span>
-          Playing playlist<span v-if="attachedPlaylist"> — {{ attachedPlaylist.name }}</span>
+          <span style="font-size: 0.7rem">{{ playlistPaused ? '❚❚' : '●' }}</span>
+          {{ playlistPaused ? 'Playlist paused' : 'Playing playlist' }}<span v-if="attachedPlaylist"> — {{ attachedPlaylist.name }}</span>
         </div>
       </div>
       <div class="d-flex gap-sm">
@@ -276,6 +276,18 @@
       <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0">
         <span>Playlist</span>
         <div v-if="attachedPlaylist" class="d-flex gap-sm">
+          <button
+            v-if="playlistPlaying && !playlistPaused"
+            class="btn btn-secondary"
+            :disabled="commandsBlocked"
+            @click="pausePlaylist"
+          >❚❚ Pause</button>
+          <button
+            v-if="playlistPlaying && playlistPaused"
+            class="btn btn-primary"
+            :disabled="commandsBlocked"
+            @click="resumePlaylist"
+          >▶ Resume</button>
           <button
             v-if="playlistPlaying"
             class="btn btn-secondary"
@@ -631,6 +643,7 @@ const kioskId = computed(() => route.params.id)
 
 const playlistActiveIdx = computed(() => livePlaylistState.value?.idx ?? null)
 const playlistPlaying = computed(() => livePlaylistState.value != null)
+const playlistPaused = computed(() => livePlaylistState.value?.paused === true)
 
 // Tab cycling: live running state comes over the heartbeat (tab_cycle_state);
 // the enable flag + interval are persisted per-node in meta.tab_cycle.
@@ -797,6 +810,32 @@ async function playPlaylist() {
     await loadCommandLog()
   } catch {
     toast.add('Failed to start playlist', 'error')
+  } finally {
+    commanding.value = false
+  }
+}
+
+async function pausePlaylist() {
+  commanding.value = true
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/playlist/pause`, { method: 'POST' })
+    toast.add('Playlist paused', 'success')
+    await loadCommandLog()
+  } catch {
+    toast.add('Failed to pause playlist', 'error')
+  } finally {
+    commanding.value = false
+  }
+}
+
+async function resumePlaylist() {
+  commanding.value = true
+  try {
+    await apiFetch(`/kiosks/${kioskId.value}/playlist/resume`, { method: 'POST' })
+    toast.add('Playlist resumed', 'success')
+    await loadCommandLog()
+  } catch {
+    toast.add('Failed to resume playlist', 'error')
   } finally {
     commanding.value = false
   }

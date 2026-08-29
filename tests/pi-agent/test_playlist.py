@@ -59,7 +59,7 @@ def test_playlist_current_state_before_start():
     items = [{"url": "http://a", "duration_seconds": 5}, {"url": "http://b", "duration_seconds": 5}]
     player = PlaylistPlayer("pl1", items)
     state = player.current_state()
-    assert state == {"idx": 0, "started_at": None, "total": 2}
+    assert state == {"idx": 0, "started_at": None, "total": 2, "paused": False}
 
 
 def test_playlist_current_state_reports_started_at_when_set():
@@ -82,3 +82,74 @@ def test_playlist_name_defaults_to_id():
 def test_playlist_name_used_when_given():
     player = PlaylistPlayer("pl1", [], playlist_name="Lobby")
     assert player._playlist_name == "Lobby"
+
+
+# --- PlaylistPlayer pause / resume --------------------------------------------
+
+
+def _player_with_tabs(n=2):
+    """A player whose run loop can be driven without CDP: tabs are fakes and
+    tab activation is a no-op."""
+    items = [{"url": f"http://{i}", "duration_seconds": 0.05} for i in range(n)]
+    player = PlaylistPlayer("pl1", items, refresh_seconds=0)
+    player._tabs = [{"id": f"t{i}", "url": f"http://{i}"} for i in range(n)]
+    return player
+
+
+def test_start_paused_is_reflected_in_state():
+    player = PlaylistPlayer("pl1", [{"url": "http://a", "duration_seconds": 5}], start_paused=True)
+    assert player.paused is True
+    assert player.current_state()["paused"] is True
+
+
+def test_pause_holds_the_current_item(monkeypatch):
+    import time as _time
+
+    from kio_agent import playlist as mod
+
+    monkeypatch.setattr(mod, "_activate_tab", lambda tab_id: True)
+    monkeypatch.setattr(mod, "_close_tab", lambda tab_id: None)
+    player = _player_with_tabs(3)
+    player.pause()  # queued before the loop starts: takes effect on the first item
+    player._thread.start()
+    _time.sleep(0.3)  # several durations' worth — a playing loop would have advanced
+    assert player.paused is True
+    assert player.current_state()["idx"] == 0
+    player.stop()
+
+
+def test_resume_advances_again(monkeypatch):
+    import time as _time
+
+    from kio_agent import playlist as mod
+
+    monkeypatch.setattr(mod, "_activate_tab", lambda tab_id: True)
+    monkeypatch.setattr(mod, "_close_tab", lambda tab_id: None)
+    player = _player_with_tabs(3)
+    player.pause()
+    player._thread.start()
+    _time.sleep(0.15)
+    player.resume()
+    _time.sleep(0.3)
+    assert player.paused is False
+    assert player.current_state()["idx"] != 0
+    player.stop()
+
+
+def test_goto_while_paused_moves_but_stays_paused(monkeypatch):
+    import time as _time
+
+    from kio_agent import playlist as mod
+
+    monkeypatch.setattr(mod, "_activate_tab", lambda tab_id: True)
+    monkeypatch.setattr(mod, "_close_tab", lambda tab_id: None)
+    monkeypatch.setattr(mod, "_report_command", lambda *a, **k: None)
+    player = _player_with_tabs(3)
+    player.pause()
+    player._thread.start()
+    _time.sleep(0.1)
+    player.goto(2)
+    _time.sleep(0.3)
+    assert player.current_state()["idx"] == 2
+    assert player.paused is True
+    player.stop()
