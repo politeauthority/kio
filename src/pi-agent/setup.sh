@@ -311,22 +311,52 @@ with open('$CONFIG_FILE') as f:
 }
 
 yaml_get_features() {
-  python3 -c "
+  # Prints the node's features as a comma-separated list. Accepts every shape the
+  # config has ever been written in: an inline "features: a,b", a flow list
+  # "features: [a, b]", and a block list with items at any indentation — PyYAML
+  # (the agent's save_features) writes "- item" at column 0, setup.sh writes
+  # "  - item". Exits 1 if the features block is present but unparseable, so a
+  # reinstall aborts rather than silently rewriting the config without it.
+  python3 - "$CONFIG_FILE" <<'PYFEAT'
+import sys
+
 features = []
-in_features = False
-with open('$CONFIG_FILE') as f:
+seen_key = False
+in_block = False
+unparsed = []
+with open(sys.argv[1]) as f:
     for line in f:
-        if line.startswith('features:'):
-            val = line.split(':', 1)[1].strip()
-            if val and val != '[]':
-                features = [v.strip() for v in val.split(',') if v.strip()]
-            in_features = True
-        elif in_features and line.startswith('  - '):
-            features.append(line.strip()[2:])
-        elif in_features and line and not line.startswith(' '):
-            break
-print(','.join(features))
-"
+        stripped = line.strip()
+        if not in_block:
+            if line.startswith("features:"):
+                seen_key = True
+                in_block = True
+                val = line.split(":", 1)[1].strip()
+                if val.startswith("[") and val.endswith("]"):
+                    val = val[1:-1]
+                if val and val not in ("null", "~"):
+                    features = [v.strip().strip("'\"") for v in val.split(",") if v.strip()]
+            continue
+        # Inside the block: list items may sit at any indentation.
+        if stripped.startswith("- "):
+            item = stripped[2:].strip().strip("'\"")
+            if item:
+                features.append(item)
+        elif not stripped or stripped.startswith("#"):
+            continue
+        elif not line.startswith(" "):
+            break  # next top-level key
+        else:
+            unparsed.append(stripped)
+
+if seen_key and not features and unparsed:
+    sys.stderr.write(
+        "  ERROR: could not parse the features block in the existing config; "
+        "refusing to rewrite it without them: %s\n" % unparsed
+    )
+    sys.exit(1)
+print(",".join(features))
+PYFEAT
 }
 
 # If --env is given, use the per-env stored config if it exists
@@ -537,7 +567,7 @@ if [[ -n "$CONFIG_FILE_ARG" ]]; then
   echo "  Loading config from $CONFIG_FILE_ARG"
   KIOSK_ID=$(yaml_get id)
   START_URL=$(yaml_get start_url)
-  FEATURES=$(yaml_get_features)
+  FEATURES=$(yaml_get_features) || { echo "  Aborting: existing features could not be read from $CONFIG_FILE"; exit 1; }
   API_URL=$(yaml_get_nested api url)
   API_TOKEN=$(yaml_get_nested api token)
   MQTT_HOST=$(yaml_get_nested mqtt host)
@@ -551,7 +581,7 @@ elif [[ -f "$CONFIG_FILE" ]] && [[ -z "$API_TOKEN_ARG" ]]; then
   echo "  Loading config from $CONFIG_FILE"
   KIOSK_ID=$(yaml_get id)
   START_URL=$(yaml_get start_url)
-  FEATURES=$(yaml_get_features)
+  FEATURES=$(yaml_get_features) || { echo "  Aborting: existing features could not be read from $CONFIG_FILE"; exit 1; }
   API_URL=$(yaml_get_nested api url)
   API_TOKEN=$(yaml_get_nested api token)
   MQTT_HOST=$(yaml_get_nested mqtt host)
@@ -698,7 +728,9 @@ else
     TLS_VERIFY_LINE=$'\n  tls_verify: '"$EXISTING_TLS_VERIFY"
   fi
 
-  FEATURES_YAML=""
+  # Always written, as an explicit empty list when the node has no features —
+  # a missing key and "no capabilities" must not look the same.
+  FEATURES_YAML=$'\nfeatures: []'
   if [[ -n "$FEATURES" ]]; then
     FEATURES_YAML=$(echo "$FEATURES" | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -v '^$' | sed 's/^/  - /')
     FEATURES_YAML=$'\nfeatures:\n'"$FEATURES_YAML"

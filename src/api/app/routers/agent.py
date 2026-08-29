@@ -193,7 +193,38 @@ async def get_agent_settings(
     default_url_row = await session.get(AppSetting, "global_default_url")
     if default_url_row and default_url_row.value:
         result["default_url"] = default_url_row.value
+    # The server's copy of this node's capabilities, so a node whose local
+    # kiosk.yaml lost them (a reinstall that failed to carry them over, a wiped
+    # SD card) can adopt them on boot instead of running with none. Union of what
+    # the node last advertised and what its last detect probed, with the admin's
+    # per-capability overrides applied on top. Always present: a node with no
+    # features gets an explicit empty list, never a missing key.
+    result["features"] = await _restorable_features(session, kiosk)
     return result
+
+
+async def _restorable_features(session: AsyncSession, kiosk: Kiosk) -> list[str]:
+    caps = set(kiosk.features or [])
+    log_result = await session.execute(
+        select(HardwareDetectLog)
+        .where(HardwareDetectLog.kiosk_id == kiosk.id)
+        .order_by(HardwareDetectLog.detected_at.desc())
+        .limit(1)
+    )
+    log = log_result.scalar_one_or_none()
+    if log is not None:
+        caps |= set(log.capabilities or [])
+    meta_result = await session.execute(
+        select(NodeMeta).where(NodeMeta.kiosk_id == kiosk.id, NodeMeta.key == "features_overrides")
+    )
+    meta_row = meta_result.scalar_one_or_none()
+    overrides: dict = meta_row.value if meta_row and meta_row.value else {}
+    for cap, enabled in overrides.items():
+        if enabled:
+            caps.add(cap)
+        else:
+            caps.discard(cap)
+    return sorted(caps)
 
 
 @router.get("/meta")
