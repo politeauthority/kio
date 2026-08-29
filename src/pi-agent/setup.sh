@@ -25,6 +25,9 @@
 #   --insecure-tls  Skip API TLS verification (testing only)
 #   --allow-http    Pre-acknowledge an unencrypted http:// API (non-interactive
 #                   runs; interactive runs are prompted to confirm instead)
+#   --dns-fallback  Resolvers tried after --dns when it doesn't answer. Default "auto"
+#                 = the default gateway + 1.1.1.1; "none" to pin the primary alone;
+#                 or a comma/space list. KIO_DNS_FALLBACK works too.
 #   --dns         Custom DNS server(s) for the node (e.g. a Pi-hole that resolves
 #                 internal API hostnames). Comma/space separated. Prompted if a
 #                 terminal is attached; KIO_DNS works too.
@@ -191,12 +194,17 @@ ALLOW_HTTP="${KIO_ALLOW_HTTP:-0}"
 # Optional custom DNS server(s) for the node — e.g. a Pi-hole that resolves internal
 # names like the API hostname. Comma/space separated. Interactive runs are prompted.
 DNS_ARG="${KIO_DNS:-}"
+# Fallback resolvers appended after the primary so a single-server outage (the
+# Pi-hole box rebooting) doesn't blank every kiosk. Default: the node's default
+# gateway (usually forwards to the same LAN resolver, so internal names still work
+# while it's up) then a public resolver for the wider internet. "none" disables.
+DNS_FALLBACK_ARG="${KIO_DNS_FALLBACK:-auto}"
 CLEAR=0
 
 while [[ $# -gt 0 ]]; do
   opt="$1"
   case "$opt" in
-    --env|--api-url|--token|--start-url|--features|--config|--ca-cert|--dns)
+    --env|--api-url|--token|--start-url|--features|--config|--ca-cert|--dns|--dns-fallback)
       # Value-taking options: fail clearly if the value is missing (rather than a
       # cryptic "$2: unbound variable" under set -u).
       [[ $# -ge 2 ]] || { echo "Error: $opt requires a value"; exit 1; }
@@ -210,6 +218,7 @@ while [[ $# -gt 0 ]]; do
         --config)     CONFIG_FILE_ARG="$val" ;;
         --ca-cert)    CA_CERT_ARG="$val" ;;
         --dns)        DNS_ARG="$val" ;;
+        --dns-fallback) DNS_FALLBACK_ARG="$val" ;;
       esac ;;
     --insecure-tls) INSECURE_TLS=1; shift ;;
     --accept-cert) ACCEPT_CERT=1; shift ;;
@@ -495,12 +504,38 @@ _verify_dns() {
 # names like the API hostname. Written to whatever network stack is active, in a
 # location that survives reboots — and, for NetworkManager, one that also survives
 # netplan regenerating the connection profiles on boot.
+# Resolver options written next to the server list: with a fallback present, give
+# a dead primary 2 s (not glibc's 5 s x 2 attempts) before the next server is tried.
+DNS_OPTIONS="timeout:2 attempts:1"
+
+# The fallback list for apply_dns: expands "auto" to gateway + 1.1.1.1, drops
+# anything already in the primary list, and keeps order.
+_dns_fallbacks() {
+  local primary="$1" raw="$2" gw out="" ns
+  case "$raw" in
+    none|"") return 0 ;;
+    auto)
+      gw="$(ip -4 route show default 2>/dev/null | awk '/default/ {print $3; exit}')"
+      raw="${gw:+$gw }1.1.1.1"
+      ;;
+  esac
+  for ns in $(echo "$raw" | tr ',' ' '); do
+    [[ " $primary $out " == *" $ns "* ]] && continue
+    out="${out:+$out }$ns"
+  done
+  printf '%s' "$out"
+}
+
 apply_dns() {
-  local dns
-  dns="$(echo "$1" | tr ',' ' ' | xargs)"   # comma/space separated -> single-spaced, trimmed
-  [[ -z "$dns" ]] && return 0
+  local dns primary
+  primary="$(echo "$1" | tr ',' ' ' | xargs)"   # comma/space separated -> single-spaced, trimmed
+  [[ -z "$primary" ]] && return 0
+  local fallback
+  fallback="$(_dns_fallbacks "$primary" "${2:-$DNS_FALLBACK_ARG}")"
+  dns="${primary}${fallback:+ $fallback}"
   local csv="${dns// /,}"                    # comma-separated form for nmcli / conf.d
-  echo "  Configuring DNS server(s): $dns"
+  local opts_csv="${DNS_OPTIONS// /,}"
+  echo "  Configuring DNS server(s): $primary${fallback:+  (fallback: $fallback)}"
 
   if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager; then
     # Primary: a global-DNS drop-in under /etc/NetworkManager/conf.d/. netplan only
@@ -508,14 +543,16 @@ apply_dns() {
     # survives a reboot even though the active profiles live on tmpfs. It also wins
     # over per-connection DNS.
     sudo mkdir -p /etc/NetworkManager/conf.d
-    printf '# Managed by kio setup.sh\n[global-dns-domain-*]\nservers=%s\n' "$csv" \
+    # options= lives in [global-dns] (NetworkManager.conf(5)); the domain section
+    # carries the servers. A domain section implies [global-dns] anyway.
+    printf '# Managed by kio setup.sh\n[global-dns]\noptions=%s\n\n[global-dns-domain-*]\nservers=%s\n' "$opts_csv" "$csv" \
       | sudo tee /etc/NetworkManager/conf.d/90-kio-dns.conf >/dev/null
     # Belt-and-suspenders: also set it per active connection (persisted by NM's
     # store; on Debian's netplan backend this is written back to /etc/netplan).
     local conn
     while IFS= read -r conn; do
       [[ -z "$conn" ]] && continue
-      sudo nmcli con mod "$conn" ipv4.dns "$csv" ipv4.ignore-auto-dns yes 2>/dev/null || true
+      sudo nmcli con mod "$conn" ipv4.dns "$csv" ipv4.dns-options "$opts_csv" ipv4.ignore-auto-dns yes 2>/dev/null || true
     done < <(nmcli -t -f NAME,DEVICE con show --active 2>/dev/null | awk -F: '$2!="lo" && $2!=""{print $1}')
     # Reload config to apply now WITHOUT bouncing links (a con up over Wi-Fi/SSH
     # could drop this very session). A full apply happens on the post-setup reboot.
@@ -527,7 +564,7 @@ apply_dns() {
 
   if systemctl is-active --quiet systemd-resolved; then
     sudo mkdir -p /etc/systemd/resolved.conf.d
-    printf '[Resolve]\nDNS=%s\n' "$dns" | sudo tee /etc/systemd/resolved.conf.d/kio-dns.conf >/dev/null
+    printf '[Resolve]\nDNS=%s\nFallbackDNS=%s\n' "$primary" "$fallback" | sudo tee /etc/systemd/resolved.conf.d/kio-dns.conf >/dev/null
     sudo systemctl restart systemd-resolved
     echo "  DNS set via systemd-resolved."
     _verify_dns "$dns"
@@ -545,7 +582,7 @@ apply_dns() {
   fi
 
   # Last resort — may be overwritten by the network manager on reboot.
-  printf 'nameserver %s\n' $dns | sudo tee /etc/resolv.conf >/dev/null
+  { printf 'nameserver %s\n' $dns; echo "options $DNS_OPTIONS"; } | sudo tee /etc/resolv.conf >/dev/null
   echo "  WARNING: wrote /etc/resolv.conf directly — this may not survive a reboot."
 }
 
@@ -558,7 +595,41 @@ if [[ -z "$DNS_ARG" && -t 0 && -z "$CONFIG_FILE_ARG" ]]; then
   echo "  DNS server that can resolve it — such as a Pi-hole. Leave blank to keep current DNS."
   read -rp "  Custom DNS server IP (blank to skip): " DNS_ARG
 fi
-[[ -n "$DNS_ARG" ]] && apply_dns "$DNS_ARG"
+# On a re-run (self-update) --dns isn't passed, but a node that was previously
+# pinned to a resolver should still pick up new fallbacks/options: recover the
+# primary from what kio wrote last time (the conf.d drop-in) or, failing that,
+# from a connection whose DNS was set by hand (ignore-auto-dns=yes). Nodes on
+# plain DHCP DNS are left alone.
+_current_pinned_dns() {
+  local f=/etc/NetworkManager/conf.d/90-kio-dns.conf pinned=""
+  if [[ -r "$f" ]]; then
+    pinned="$(sed -n 's/^servers=//p' "$f" | tr ',' ' ')"
+  elif command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager; then
+    local conn
+    while IFS= read -r conn; do
+      [[ -z "$conn" ]] && continue
+      if [[ "$(nmcli -g ipv4.ignore-auto-dns con show "$conn" 2>/dev/null)" == "yes" ]]; then
+        pinned="$(nmcli -g ipv4.dns con show "$conn" 2>/dev/null | tr ',' ' ')"
+        [[ -n "$pinned" ]] && break
+      fi
+    done < <(nmcli -t -f NAME,DEVICE con show --active 2>/dev/null | awk -F: '$2!="lo" && $2!="" && $2!~/^(docker|veth|br-)/{print $1}')
+  fi
+  # Strip fallbacks a previous run appended so they aren't treated as primaries.
+  local gw keep="" ns
+  gw="$(ip -4 route show default 2>/dev/null | awk '/default/ {print $3; exit}')"
+  for ns in $pinned; do
+    [[ "$ns" == "1.1.1.1" || ( -n "$gw" && "$ns" == "$gw" ) ]] && continue
+    keep="${keep:+$keep }$ns"
+  done
+  printf '%s' "$keep"
+}
+
+if [[ -n "$DNS_ARG" ]]; then
+  apply_dns "$DNS_ARG"
+elif [[ "$DNS_FALLBACK_ARG" != "none" ]]; then
+  _pinned="$(_current_pinned_dns)"
+  [[ -n "$_pinned" ]] && apply_dns "$_pinned"
+fi
 
 if [[ -n "$CONFIG_FILE_ARG" ]]; then
   # --config: read everything directly from the provided kiosk YAML — no prompts, no API fetch
