@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/politeauthority/kio/compare/v0.8.2...v0.9.0) (2026-08-29)
+
+
+### Features
+
+* **ha:** playlist media player — pause/resume and pick a playlist per kiosk ([#67](https://github.com/politeauthority/kio/issues/67)) ([7ae3cac](https://github.com/politeauthority/kio/commit/7ae3caca6c8a6783476211b965bebb028adef226))
+
+
+### Bug Fixes
+
+* **ha:** trust the private CA that signs the kio API cert ([#66](https://github.com/politeauthority/kio/issues/66)) ([fd07e0b](https://github.com/politeauthority/kio/commit/fd07e0bc5bd07f9675cf080d74a97bcf9fa489de))
+
 ## [0.8.2](https://github.com/politeauthority/kio/compare/v0.8.1...v0.8.2) (2026-08-29)
 
 
