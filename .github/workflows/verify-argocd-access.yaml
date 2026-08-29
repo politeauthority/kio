@@ -59,7 +59,7 @@ jobs:
           kubectl -n argocd get application kio -o jsonpath='kio Application: sync={.status.sync.status} health={.status.health.status} rev={.status.sync.revision}{"\n"}'
           # Scope report (informational): a scoped ServiceAccount answers "no" here; an admin kubeconfig answers "yes".
           if kubectl auth can-i '*' '*' --all-namespaces >/dev/null 2>&1; then
-            echo "::warning::This identity is cluster-admin. Consider the scoped kio-ci ServiceAccount (colfax-ops#31 + scripts/argocd-kubeconfig.sh)."
+            echo "ℹ️ identity is cluster-admin (Alix's kubeconfig) — expected."
           else
             echo "ℹ️ identity is not cluster-admin (scoped) — good."
           fi

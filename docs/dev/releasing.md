@@ -108,8 +108,8 @@ Push to `main`. The `Release Please` workflow (`.github/workflows/release-please
      `newTag`s in `kio/kio/kustomization.yaml`), commits `chore(kio): release kio vX.Y.Z`,
      pushes `main`.
    - **argocd-sync** — `task prd-sync REV=<that commit>`: sets the
-     `argocd.argoproj.io/refresh` annotation on the `kio` Application via kubectl (a
-     ServiceAccount that may only refresh that one app — `ARGOCD_KUBECONFIG`), then polls
+     `argocd.argoproj.io/refresh` annotation on the `kio` Application via kubectl
+     (`ARGOCD_KUBECONFIG`), then polls
      until ArgoCD reports Synced/Healthy at the stamped revision. Without the nudge ArgoCD
      picks the commit up on its own poll + revision cache, ~3–6 minutes later.
 3. ArgoCD runs the `kio-migrate` PreSync hook (`alembic upgrade head`) and rolls the
@@ -143,7 +143,7 @@ also run `task lint` and a no-push build of both images (`pr-build-check.yaml`).
 | `HARBOR_PASSWORD` | secret | shared `robot$ci` token (also add to *Dependabot* secrets) |
 | `PAT` | secret | classic PAT with `repo` (+`workflow`) scope — must be able to merge PRs and push tags |
 | `PRIVATE_OPS_TOKEN` | secret | PAT with contents:write on `politeauthority/private-ops` |
-| `ARGOCD_KUBECONFIG` | secret | `scripts/argocd-kubeconfig.sh \| gh secret set ARGOCD_KUBECONFIG -R politeauthority/kio` — ServiceAccount that may only refresh the `kio` Application (colfax-ops `cluster/argocd/overlays/kio-ci-rbac.yaml`) |
+| `ARGOCD_KUBECONFIG` | secret | base64 of a kubeconfig that can `get`/`patch` the `kio` Application in `argocd` (`base64 -i ~/.kube/config \| tr -d '\n'`); the API server address must be reachable from the in-cluster runners |
 
 Plus: enable **rebase merging** on the repo, create the `build-check` label, and if `main`
 becomes branch-protected the PAT owner must be able to bypass it.

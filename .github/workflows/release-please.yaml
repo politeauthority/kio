@@ -27,7 +27,7 @@ run-name: "Release Please — ${{ github.ref_name }}"
 #   vars:    HARBOR_USER (robot$ci), CICD_VERSION (polite-cicd image tag)
 #   secrets: HARBOR_PASSWORD, PAT (merge release PRs, create tags/releases),
 #            PRIVATE_OPS_TOKEN (contents:write on politeauthority/private-ops),
-#            ARGOCD_KUBECONFIG (scripts/argocd-kubeconfig.sh; may only refresh app `kio`)
+#            ARGOCD_KUBECONFIG (base64 kubeconfig able to get/patch the `kio` Application)
 
 on:
   push:
@@ -313,7 +313,7 @@ jobs:
           chmod +x "$HOME/bin/kubectl"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
-      - name: Configure kubeconfig (kio-ci ServiceAccount, argocd namespace)
+      - name: Configure kubeconfig
         run: |
           set -euo pipefail
           if [ -z "${{ secrets.ARGOCD_KUBECONFIG }}" ]; then
