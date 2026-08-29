@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/politeauthority/kio/compare/v0.7.2...v0.7.3) (2026-08-29)
+
+
+### Bug Fixes
+
+* **ci:** prd-sync used a shell expansion for the Task var REV (unbound under set -u) ([#41](https://github.com/politeauthority/kio/issues/41)) ([ef58335](https://github.com/politeauthority/kio/commit/ef58335f83b4ac10a50e3be6626aba3aaf42ceb8))
+
 ## [0.7.2](https://github.com/politeauthority/kio/compare/v0.7.1...v0.7.2) (2026-08-29)
 
 
