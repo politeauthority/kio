@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.6](https://github.com/politeauthority/kio/compare/v0.7.5...v0.7.6) (2026-08-29)
+
+
+### Bug Fixes
+
+* **auth:** allow authorization_code + refresh_token grants on the Authentik provider ([#49](https://github.com/politeauthority/kio/issues/49)) ([03d9608](https://github.com/politeauthority/kio/commit/03d9608854d76bca995b3e187f99d28a9bc02cfc))
+
 ## [0.7.5](https://github.com/politeauthority/kio/compare/v0.7.4...v0.7.5) (2026-08-29)
 
 
