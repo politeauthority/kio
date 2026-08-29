@@ -26,8 +26,8 @@ After running, set the printed AUTHENTIK_ISSUER / AUTHENTIK_CLIENT_ID on the
 kio API (kubernetes-manifests/envs/<env>/api-configmap-patch.yaml) and
 re-apply: kubectl apply -k kubernetes-manifests/envs/<env>/
 
-Re-running is safe: an existing provider has its redirect URIs, scopes and
-signing key brought up to date; nothing else is changed.
+Re-running is safe: an existing provider has its redirect URIs, scopes, grant
+types and signing key brought up to date; nothing else is changed.
 """
 
 import argparse
@@ -52,6 +52,11 @@ REDIRECT_URIS = [
 # offline_access lets the UI obtain a refresh token so sessions renew silently
 # instead of redirecting through Authentik every time the access token expires.
 SCOPES = ["openid", "profile", "email", "offline_access"]
+# Authentik (2025.x+) keeps an allow-list of grant types per provider; a provider
+# created without one allows nothing and every authorize request fails with
+# "Invalid grant_type for provider". Code flow for login, refresh_token so
+# offline_access actually renews sessions.
+GRANT_TYPES = ["authorization_code", "refresh_token"]
 
 
 def api(token, method, path, body=None, params=None):
@@ -141,8 +146,8 @@ def find_or_create_provider(token):
     signing_key = _find_signing_key(token)
     p = _existing_provider(token)
     if p:
-        print(f"  Provider already exists (pk={p['pk']}, {p.get('name')!r}) — syncing redirect URIs, scopes and signing key")
-        patch = {"redirect_uris": _redirect_uris()}
+        print(f"  Provider already exists (pk={p['pk']}, {p.get('name')!r}) — syncing redirect URIs, scopes, grant types and signing key")
+        patch = {"redirect_uris": _redirect_uris(), "grant_types": GRANT_TYPES}
         scope_pks = _find_scope_pks(token)
         if scope_pks is not None:
             patch["property_mappings"] = scope_pks
@@ -154,6 +159,7 @@ def find_or_create_provider(token):
     body = {
         "name": APP_NAME,
         "client_type": "public",
+        "grant_types": GRANT_TYPES,
         "redirect_uris": _redirect_uris(),
         "authorization_flow": _get_default_auth_flow(token),
         "access_token_validity": "hours=24",
