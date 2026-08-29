@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/politeauthority/kio/compare/v0.9.0...v0.9.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **agent:** report state right after a command (HA latency, strategy 1) ([#69](https://github.com/politeauthority/kio/issues/69)) ([d3127ce](https://github.com/politeauthority/kio/commit/d3127ce30483b4475092648d6dd83f0fac21241b))
+
 ## [0.9.0](https://github.com/politeauthority/kio/compare/v0.8.2...v0.9.0) (2026-08-29)
 
 
