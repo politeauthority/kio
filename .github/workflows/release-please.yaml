@@ -14,7 +14,8 @@ run-name: "Release Please — ${{ github.ref_name }}"
 # Release, which we defer), and then, in order:
 #   1. build-push       — checkout the PR's merge commit, `task test`, `task ci-build-push`
 #   2. github-release   — release-please's release phase: tag vX.Y.Z + GitHub Release
-#   3. deploy           — stamp private-ops kio/kio (image tags + base ?ref=vX.Y.Z) → ArgoCD
+#   3. deploy           — stamp private-ops kio/kio (image tags + base ?ref=vX.Y.Z)
+#   4. argocd-sync      — refresh the ArgoCD app via kubectl and wait for the rollout
 # So a version is only tagged/released once its images exist in Harbor. If build-push
 # fails, nothing is tagged, the PR stays `pending`, and the next push to main retries
 # it from the same merge commit (ci-build-push skips image tags that already exist).
@@ -25,7 +26,8 @@ run-name: "Release Please — ${{ github.ref_name }}"
 # Repo settings (human-only, see docs/dev/releasing.md):
 #   vars:    HARBOR_USER (robot$ci), CICD_VERSION (polite-cicd image tag)
 #   secrets: HARBOR_PASSWORD, PAT (merge release PRs, create tags/releases),
-#            PRIVATE_OPS_TOKEN (contents:write on politeauthority/private-ops)
+#            PRIVATE_OPS_TOKEN (contents:write on politeauthority/private-ops),
+#            ARGOCD_KUBECONFIG (scripts/argocd-kubeconfig.sh; may only refresh app `kio`)
 
 on:
   push:
@@ -226,9 +228,11 @@ jobs:
           echo "## 🏷️ Tagged \`${{ steps.rp.outputs.tag_name }}\` + GitHub Release published" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
-    name: Stamp private-ops (ArgoCD deploys)
+    name: Stamp private-ops
     needs: [release-pr, github-release]
     runs-on: kio
+    outputs:
+      private_ops_sha: ${{ steps.stamp.outputs.sha }}
     container:
       image: harbor.squid-ink.us/politeauthority/polite-cicd:${{ vars.CICD_VERSION }}
       options: '--dns 8.8.8.8'
@@ -252,6 +256,7 @@ jobs:
           fetch-depth: 1
 
       - name: Stamp the private-ops prd overlay and push
+        id: stamp
         env:
           PRIVATE_OPS_DIR: ${{ github.workspace }}/private-ops
           VERSION: ${{ needs.release-pr.outputs.version }}
@@ -267,6 +272,7 @@ jobs:
           git commit -m "chore(kio): release kio v${VERSION}"
           # Retry once on a non-fast-forward (another app's release may have landed).
           git push origin HEAD:main || { git pull --rebase origin main && git push origin HEAD:main; }
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: 📋 Release summary
         if: always()
@@ -280,10 +286,57 @@ jobs:
               echo "| --- | --- | --- |"
               echo "| \`${{ needs.github-release.outputs.tag_name }}\` | \`kio-api:${VERSION}\` · \`kio-ui:${VERSION}\` | private-ops \`kio/kio\` stamped |"
               echo ""
-              echo "🔄 ArgoCD syncs prd next (⚠️ kio-migrate PreSync hook → rollout)."
+              echo "🔄 **ArgoCD sync** runs next: refresh + wait for the rollout (⚠️ kio-migrate PreSync hook first)."
             else
               echo "# ❌ v${VERSION} is tagged and its images are in Harbor, but private-ops was NOT stamped"
               echo ""
               echo "Re-run this job, or from a laptop: \`task stamp-prd\` in the kio repo at \`v${VERSION}\`, then commit + push private-ops."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  argocd-sync:
+    name: ArgoCD sync
+    needs: [release-pr, github-release, deploy]
+    runs-on: kio                    # in-cluster: reaches the API server via kubernetes.default.svc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.github-release.outputs.tag_name }}
+
+      - name: Install toolchain (task, kubectl)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          curl -fsSL -o "$HOME/bin/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x "$HOME/bin/kubectl"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Configure kubeconfig (kio-ci ServiceAccount, argocd namespace)
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.ARGOCD_KUBECONFIG }}" ]; then
+            echo "::warning::secrets.ARGOCD_KUBECONFIG is not set — skipping the ArgoCD nudge; it will pick up private-ops on its own poll (~3–6 min)."
+            echo "skip=true" >> "$GITHUB_ENV"; exit 0
+          fi
+          mkdir -p ~/.kube
+          echo "${{ secrets.ARGOCD_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Refresh the kio Application and wait for the rollout
+        if: env.skip != 'true'
+        run: task prd-sync REV=${{ needs.deploy.outputs.private_ops_sha }}
+
+      - name: 📋 Sync summary
+        if: always()
+        run: |
+          {
+            if [ "${skip:-}" = "true" ]; then
+              echo "## ⏭️ ArgoCD nudge skipped (no ARGOCD_KUBECONFIG) — it syncs on its own poll"
+            elif [ "${{ job.status }}" = "success" ]; then
+              echo "## ✅ 🔄 ArgoCD synced private-ops \`${{ needs.deploy.outputs.private_ops_sha }}\` — prod is on v${{ needs.release-pr.outputs.version }}"
+            else
+              echo "## ❌ 🔄 ArgoCD did not reach Synced/Healthy in time — check the \`kio\` Application (migrate hook?)"
             fi
           } >> "$GITHUB_STEP_SUMMARY"

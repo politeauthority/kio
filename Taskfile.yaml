@@ -650,6 +650,33 @@ tasks:
       - kubectl rollout status deployment/kio-api -n kio-stg --timeout=120s
       - kubectl rollout status deployment/kio-ui -n kio-stg --timeout=120s
 
+  prd-sync:
+    desc: "Tell ArgoCD to refresh the kio app now and wait until it has synced private-ops (usage: task prd-sync REV=<private-ops commit>)"
+    vars:
+      REV: '{{.REV | default ""}}'
+      TIMEOUT: '{{.TIMEOUT | default "600"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        # A refresh makes ArgoCD re-read private-ops right away instead of waiting out its
+        # poll interval + revision cache (~3-6 min); the app is auto-sync, so it then rolls.
+        kubectl -n argocd annotate application kio argocd.argoproj.io/refresh=normal --overwrite >/dev/null
+        echo "Refresh requested; waiting for ArgoCD to sync${REV:+ revision $REV}..."
+        deadline=$(( $(date +%s) + {{.TIMEOUT}} ))
+        while :; do
+          st=$(kubectl -n argocd get application kio -o jsonpath='{.status.sync.status}/{.status.health.status}/{.status.operationState.phase}/{.status.sync.revision}')
+          IFS=/ read -r sync health phase rev <<<"$st"
+          if [ "$sync" = "Synced" ] && [ "$health" = "Healthy" ] && [ "$phase" = "Succeeded" ] && { [ -z "{{.REV}}" ] || [[ "$rev" == {{.REV}}* ]]; }; then
+            echo "ArgoCD: Synced/Healthy at ${rev:0:7}"; exit 0
+          fi
+          if [ "$phase" = "Failed" ] || [ "$phase" = "Error" ]; then
+            echo "ArgoCD sync ${phase}: $(kubectl -n argocd get application kio -o jsonpath='{.status.operationState.message}')" >&2; exit 1
+          fi
+          [ "$(date +%s)" -lt "$deadline" ] || { echo "Timed out after {{.TIMEOUT}}s: sync=$sync health=$health phase=$phase rev=${rev:0:7}" >&2; exit 1; }
+          echo "  sync=$sync health=$health phase=${phase:-none} rev=${rev:0:7}"; sleep 10
+        done
+      - kubectl -n kio get deploy -o jsonpath='{range .items[*]}{.metadata.name}={.spec.template.spec.containers[0].image}{"\n"}{end}'
+
   stamp-prd:
     desc: Write the current version into the private-ops prd overlay (image tags + base ref)
     preconditions:
