@@ -4,6 +4,11 @@ updates:
     directory: "/src/api"
     schedule:
       interval: "weekly"
+    # `deps:` is a visible changelog section in release-please-config.json, so a
+    # merged Dependabot PR cuts a patch release (the default `chore(deps):` is hidden
+    # and would never release).
+    commit-message:
+      prefix: "deps"
     groups:
       python-deps:
         patterns:
@@ -12,6 +17,11 @@ updates:
     directory: "/src/ui"
     schedule:
       interval: "weekly"
+    # `deps:` is a visible changelog section in release-please-config.json, so a
+    # merged Dependabot PR cuts a patch release (the default `chore(deps):` is hidden
+    # and would never release).
+    commit-message:
+      prefix: "deps"
     groups:
       ui-deps:
         patterns:
@@ -25,6 +35,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # `deps:` is a visible changelog section in release-please-config.json, so a
+    # merged Dependabot PR cuts a patch release (the default `chore(deps):` is hidden
+    # and would never release).
+    commit-message:
+      prefix: "deps"
     groups:
       actions:
         patterns:
