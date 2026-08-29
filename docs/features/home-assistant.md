@@ -27,7 +27,7 @@ Each kiosk in kio becomes a single Device in HA. The entities created depend on 
 | Standby (CEC) | Button | Sends CEC standby signal — requires `cec` capability |
 | Wake (CEC) | Button | Sends CEC wake signal — requires `cec` capability |
 | Display Power | Switch | Turns the display on/off — requires `display_power` capability |
-| Display Input | Select | Switches between hdmi1/hdmi2/dp1/dp2 — requires `input_switch` capability |
+| Display Input | Select | Switches inputs — requires `input_switch` capability. Options are the inputs left visible in the kiosk's **Input Configuration** (edit page), shown under the names given there (defaults: HDMI 1, HDMI 2, DP 1, DP 2). The input the display is on is always listed, hidden or not. `input_key` attribute carries the raw key (`hdmi1`…) |
 | Brightness | Number | Display luminance 0–100 — requires `brightness` capability |
 
 Feature-gated entities only appear after the kiosk agent reports that capability. If you expect a switch, select, or slider that isn't showing up, press **Detect Capabilities** on the kiosk in the kio dashboard and wait for the scan to complete.
