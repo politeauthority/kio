@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/politeauthority/kio/compare/v0.7.9...v0.8.0) (2026-08-29)
+
+
+### Features
+
+* **ha:** show saved URL names for the current page and navigate by name ([#59](https://github.com/politeauthority/kio/issues/59)) ([4aa9edc](https://github.com/politeauthority/kio/commit/4aa9edc5ee45c7ef55e9574155eb472e9ee2b27a))
+
 ## [0.7.9](https://github.com/politeauthority/kio/compare/v0.7.8...v0.7.9) (2026-08-29)
 
 
