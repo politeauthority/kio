@@ -33,12 +33,8 @@ logger = logging.getLogger("kio.main")
 
 
 async def _offline_sweeper() -> None:
-    from datetime import datetime, timedelta, timezone
-
-    from sqlalchemy import delete
-
     from app.database import async_session_factory
-    from app.models.command_log import CommandLog
+    from app.services.retention_service import run_retention
     from app.services.settings_service import get_global_settings
 
     ticks = 0
@@ -56,12 +52,15 @@ async def _offline_sweeper() -> None:
                     heartbeat_interval=settings_["heartbeat_interval_seconds"],
                     heartbeat_jitter=settings_["heartbeat_jitter_seconds"],
                 )
-                # Purge old event-log entries (runs hourly).
+                # Data retention (Settings → Data retention) runs hourly.
                 if ticks % 60 == 0:
-                    cutoff = datetime.now(timezone.utc) - timedelta(days=settings_["event_log_purge_days"])
-                    result = await session.execute(delete(CommandLog).where(CommandLog.sent_at < cutoff))
-                    await session.commit()
-                    logger.info("Purged %d event-log entries older than %d days", result.rowcount, settings_["event_log_purge_days"])
+                    removed = await run_retention(session, settings_)
+                    logger.info(
+                        "Retention: purged %s (event log > %dd, hardware logs > %dd)",
+                        removed,
+                        settings_["event_log_purge_days"],
+                        settings_["hardware_log_purge_days"],
+                    )
         except Exception as exc:
             logger.error("Offline sweeper error: %s", exc)
 
