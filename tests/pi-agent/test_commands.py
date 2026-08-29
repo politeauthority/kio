@@ -251,3 +251,70 @@ def test_resume_without_player_reports_failure(agent, reports):
     commands.handle_command(_payload("resume_playlist"))
     assert len(reports) == 1
     assert reports[0]["success"] is False
+
+
+# --- post-command heartbeat (docs/dev/ha-latency.md, strategy 1) --------------
+
+
+@pytest.fixture
+def scheduled(monkeypatch):
+    """Capture _schedule_state_heartbeat calls instead of starting timers."""
+    calls = []
+    monkeypatch.setattr(commands, "_schedule_state_heartbeat", lambda delay=None: calls.append(delay))
+    return calls
+
+
+def test_state_changing_commands_are_all_dispatchable():
+    assert commands.STATE_CHANGING_COMMANDS <= set(commands._DISPATCH) | {"pause_playlist", "resume_playlist"}
+
+
+def test_display_on_schedules_a_heartbeat(agent, reports, scheduled, monkeypatch):
+    monkeypatch.setattr(commands, "_set_display_power", lambda on: None)
+    commands.handle_command(_payload("display_on"))
+    assert scheduled == [None]
+
+
+def test_stop_playlist_schedules_a_heartbeat(agent, reports, scheduled):
+    commands.handle_command(_payload("stop_playlist"))
+    agent._stop_playlist.assert_called_once()
+    assert scheduled == [None]
+
+
+def test_non_state_commands_do_not_schedule(agent, reports, scheduled, monkeypatch):
+    monkeypatch.setattr(commands, "reload_page", lambda: None)
+    commands.handle_command(_payload("reload"))
+    commands.handle_command(_payload("frobnicate"))
+    assert scheduled == []
+
+
+def test_failed_handler_does_not_schedule(agent, reports, scheduled, monkeypatch):
+    def boom(cmd, command_id):
+        raise RuntimeError("nope")
+
+    monkeypatch.setitem(commands._DISPATCH, "display_on", boom)
+    commands.handle_command(_payload("display_on"))
+    assert reports[-1]["success"] is False
+    assert scheduled == []
+
+
+def test_schedule_state_heartbeat_posts_after_delay(agent, monkeypatch):
+    fired = []
+
+    class FakeTimer:
+        def __init__(self, delay, fn):
+            fired.append(delay)
+            self.fn = fn
+            self.daemon = False
+
+        def start(self):
+            self.fn()
+
+    monkeypatch.setattr(commands.threading, "Timer", FakeTimer)
+    commands._schedule_state_heartbeat()
+    assert fired == [commands.STATE_HEARTBEAT_DELAY]
+    agent._post_heartbeat.assert_called_once()
+
+
+def test_schedule_state_heartbeat_without_agent_is_a_noop(no_agent, monkeypatch):
+    monkeypatch.setattr(commands.threading, "Timer", lambda *a, **k: (_ for _ in ()).throw(AssertionError("timer")))
+    commands._schedule_state_heartbeat()
