@@ -93,21 +93,33 @@ from multiple machines.
 
 ### Normal path: merge to `main`
 
-Every push to `main` runs **Release Please** (`.github/workflows/release-please.yaml`):
+Push to `main`. The `Release Please` workflow (`.github/workflows/release-please.yaml`):
 
-1. release-please reads the Conventional Commits since the last tag and opens/updates a
-   **release PR** (`chore(main): release X.Y.Z`) that bumps `VERSION`, the HA
-   `manifest.json` and `CHANGELOG.md`.
-2. The workflow **auto-merges that PR** (rebase, with the `PAT` secret). No human click.
-3. The merge is a push to `main`, so the workflow runs again — this time
-   `release_created == true`: it tags `vX.Y.Z`, publishes the GitHub Release, then the
-   `build-deploy` job checks out the tag and runs `task test` → `task ci-build-push`
-   (`kio-api:X.Y.Z`, `kio-ui:X.Y.Z`, both also `:latest`) → checks out private-ops →
-   `task stamp-prd` → commits `chore(kio): release kio vX.Y.Z` and pushes `main`.
-4. ArgoCD sees the private-ops commit, runs the `kio-migrate` PreSync hook
-   (`alembic upgrade head`) and rolls the Deployments only if it succeeds.
+1. **release-pr** — release-please reads the Conventional Commits since the last tag and
+   opens/updates a **release PR** (`chore(main): release X.Y.Z`) bumping `VERSION`, the HA
+   `manifest.json` and `CHANGELOG.md`; the workflow **auto-merges it** (rebase, `PAT`).
+2. That merge is a push to `main`, so the workflow runs again and finds the merged release
+   PR still labelled `autorelease: pending`. In order:
+   - **build-push** — checks out the PR's merge commit, `task test`, `task ci-build-push`
+     (`kio-api:X.Y.Z`, `kio-ui:X.Y.Z`, both also `:latest`).
+   - **github-release** — *only now* release-please's release phase tags `vX.Y.Z` and
+     publishes the GitHub Release (relabelling the PR `autorelease: tagged`).
+   - **deploy** — checks out private-ops, `task stamp-prd` (rewrites `?ref=` and both
+     `newTag`s in `kio/kio/kustomization.yaml`), commits `chore(kio): release kio vX.Y.Z`,
+     pushes `main`.
+   - **argocd-sync** — `task prd-sync REV=<that commit>`: sets the
+     `argocd.argoproj.io/refresh` annotation on the `kio` Application via kubectl (a
+     ServiceAccount that may only refresh that one app — `ARGOCD_KUBECONFIG`), then polls
+     until ArgoCD reports Synced/Healthy at the stamped revision. Without the nudge ArgoCD
+     picks the commit up on its own poll + revision cache, ~3–6 minutes later.
+3. ArgoCD runs the `kio-migrate` PreSync hook (`alembic upgrade head`) and rolls the
+   Deployments only if it succeeds.
 
-So a `fix:` merged to `main` is in production a few minutes later with no manual step.
+**A version is tagged and released only after its images are in Harbor.** If the build
+fails, nothing is tagged; the release PR stays `pending` and the next push to `main` (or a
+manual run of the workflow) retries it from the same merge commit — `ci-build-push` skips
+image tags that already exist, so a half-pushed release resumes cleanly.
+
 Commits that are not Conventional (`checking in`) never trigger a release.
 
 ### Forcing a release
@@ -131,6 +143,7 @@ also run `task lint` and a no-push build of both images (`pr-build-check.yaml`).
 | `HARBOR_PASSWORD` | secret | shared `robot$ci` token (also add to *Dependabot* secrets) |
 | `PAT` | secret | classic PAT with `repo` (+`workflow`) scope — must be able to merge PRs and push tags |
 | `PRIVATE_OPS_TOKEN` | secret | PAT with contents:write on `politeauthority/private-ops` |
+| `ARGOCD_KUBECONFIG` | secret | `scripts/argocd-kubeconfig.sh \| gh secret set ARGOCD_KUBECONFIG -R politeauthority/kio` — ServiceAccount that may only refresh the `kio` Application (colfax-ops `cluster/argocd/overlays/kio-ci-rbac.yaml`) |
 
 Plus: enable **rebase merging** on the repo, create the `build-check` label, and if `main`
 becomes branch-protected the PAT owner must be able to bypass it.

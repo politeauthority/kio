@@ -1,26 +1,33 @@
 name: Release Please
 run-name: "Release Please — ${{ github.ref_name }}"
 
-# 🚀 Release pipeline (the private-ops CI/CD pattern; see
-# private-ops/docs/cicd-repo-onboarding.md, reference impl: bookmarx).
+# 🚀 Release pipeline (the private-ops CI/CD pattern; reference impl: bookmarx —
+# with one deliberate difference: the tag + GitHub Release are created LAST).
 #
 # On every push to main, release-please scans Conventional Commits and maintains a
-# "release" PR that bumps VERSION + the HA integration manifest + CHANGELOG.md.
-# The PR is auto-merged here (no human click) with a PAT — GITHUB_TOKEN-caused
-# pushes do NOT re-trigger workflows, and the merge must re-trigger this one so the
-# second run sees `release_created == true`. That run tags vX.Y.Z, creates the
-# GitHub Release, builds + pushes kio-api / kio-ui to Harbor, and then stamps the
-# release into the private-ops GitOps repo (kio/kio/kustomization.yaml: image tags
-# + the base ref, which pins kubernetes-manifests/base to the new tag). ArgoCD
-# watches private-ops and rolls prd, running the kio-migrate PreSync hook first.
+# "release" PR (`chore(main): release X.Y.Z`) that bumps VERSION, the HA integration
+# manifest and CHANGELOG.md. The PR is auto-merged here with a PAT — GITHUB_TOKEN-
+# caused pushes do NOT re-trigger workflows, and the merge must re-trigger this one.
 #
-# Two jobs: the release-please action is a JS action (needs the runner's Node, so no
-# container); build/deploy needs uv/docker/task from the polite-cicd container.
+# That second run finds the merged release PR still labelled `autorelease: pending`
+# (release-please only flips it to `autorelease: tagged` when it creates the GitHub
+# Release, which we defer), and then, in order:
+#   1. build-push       — checkout the PR's merge commit, `task test`, `task ci-build-push`
+#   2. github-release   — release-please's release phase: tag vX.Y.Z + GitHub Release
+#   3. deploy           — stamp private-ops kio/kio (image tags + base ?ref=vX.Y.Z)
+#   4. argocd-sync      — refresh the ArgoCD app via kubectl and wait for the rollout
+# So a version is only tagged/released once its images exist in Harbor. If build-push
+# fails, nothing is tagged, the PR stays `pending`, and the next push to main retries
+# it from the same merge commit (ci-build-push skips image tags that already exist).
 #
-# Repo settings this needs (human-only, see docs/dev/releasing.md):
+# release-please is a JS action (needs the runner's Node, so no container); build and
+# deploy need uv/docker/task from the polite-cicd container.
+#
+# Repo settings (human-only, see docs/dev/releasing.md):
 #   vars:    HARBOR_USER (robot$ci), CICD_VERSION (polite-cicd image tag)
-#   secrets: HARBOR_PASSWORD, PAT (merge release PRs + push tags here),
-#            PRIVATE_OPS_TOKEN (contents:write on politeauthority/private-ops)
+#   secrets: HARBOR_PASSWORD, PAT (merge release PRs, create tags/releases),
+#            PRIVATE_OPS_TOKEN (contents:write on politeauthority/private-ops),
+#            ARGOCD_KUBECONFIG (scripts/argocd-kubeconfig.sh; may only refresh app `kio`)
 
 on:
   push:
@@ -37,25 +44,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release-please:
-    name: Release PR / tag
+  release-pr:
+    name: Release PR
     runs-on: kio                    # ARC runner; NO container (uses the runner's Node)
     outputs:
-      release_created: ${{ steps.rp.outputs.release_created }}
-      tag_name: ${{ steps.rp.outputs.tag_name }}
-      version: ${{ steps.rp.outputs.version }}
+      pending: ${{ steps.pending.outputs.pending }}
+      version: ${{ steps.pending.outputs.version }}
+      sha: ${{ steps.pending.outputs.sha }}
+      pr: ${{ steps.pending.outputs.pr }}
     steps:
-      - name: Run release-please
+      # Runs BEFORE the auto-merge below on purpose: the PR this run merges must be
+      # built by the run that merge triggers, not by this one.
+      - name: Find a merged release PR that has not been released yet
+        id: pending
+        env:
+          PAT: ${{ secrets.PAT }}
+        run: |
+          set -euo pipefail
+          hit=$(curl -sS -H "Authorization: Bearer ${PAT}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=30" \
+            | jq -r '[.[] | select(.merged_at != null) | select(any(.labels[]; .name == "autorelease: pending"))]
+                     | sort_by(.merged_at) | first // empty
+                     | "\(.number)\t\(.merge_commit_sha)\t\(.title)"')
+          if [ -z "$hit" ]; then
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+            echo "No merged, unreleased release PR — nothing to build."
+            exit 0
+          fi
+          IFS=$'\t' read -r pr sha title <<<"$hit"
+          version=$(sed -nE 's/.*release v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' <<<"$title")
+          [ -n "$version" ] || { echo "::error::Could not parse a version from release PR #${pr} title: ${title}"; exit 1; }
+          {
+            echo "pending=true"; echo "pr=${pr}"; echo "sha=${sha}"; echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::Release PR #${pr} (v${version}, ${sha}) is merged and unreleased — building it."
+
+      - name: Run release-please (release PR only)
         id: rp
         uses: googleapis/release-please-action@v5
         with:
           token: ${{ secrets.PAT }}      # PAT (not github.token): the auto-merge below must re-trigger this workflow
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          skip-github-release: true      # tag + Release happen in the github-release job, after the build
 
       # Auto-merge the release PR so releases need no human click. Rebase-merge with
-      # the PAT so the resulting push to main re-triggers this workflow, whose second
-      # run cuts the tag + deploys. REST via curl: the runner has no `gh` CLI.
+      # the PAT so the resulting push to main re-triggers this workflow, whose next
+      # run builds, then tags + releases, then deploys. REST via curl: no `gh` CLI.
       - name: Auto-merge the release PR
         if: ${{ steps.rp.outputs.prs_created == 'true' }}
         env:
@@ -86,32 +121,30 @@ jobs:
         if: always()
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then WHY="a manual dispatch"; else WHY="a push to \`main\`"; fi
-          if [ "${{ steps.rp.outputs.release_created }}" = "true" ]; then
-            {
-              echo "# 🚀 Release Please — released \`${{ steps.rp.outputs.tag_name }}\`"
+          {
+            if [ "${{ steps.pending.outputs.pending }}" = "true" ]; then
+              echo "# 🚀 Release Please — building v${{ steps.pending.outputs.version }}"
+              echo ""
+              echo "> ▶️ **Why this ran:** ${WHY}. Release PR #${{ steps.pending.outputs.pr }} is merged and not yet released."
+              echo ""
+              echo "➡️ **Build & push** runs now; the tag + GitHub Release are created only if it succeeds, then prod is stamped in private-ops."
+            elif [ "${{ steps.rp.outputs.prs_created }}" = "true" ]; then
+              echo "# 🧾 Release Please — release PR opened + auto-merged"
               echo ""
               echo "> ▶️ **Why this ran:** ${WHY} — release-please maintains the release PR from Conventional Commits."
               echo ""
-              echo "A release PR was merged, so the tag + GitHub Release were created."
-              echo "➡️ The **Build, push & deploy** job is running now: images → Harbor, then the private-ops overlay is stamped for ArgoCD."
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            {
-              echo "# 🧾 Release Please — release PR maintained (nothing released)"
+              echo "The merge re-triggers this workflow; that run builds, tags and deploys."
+            else
+              echo "# 🧾 Release Please — nothing to release"
               echo ""
-              echo "> ▶️ **Why this ran:** ${WHY} — release-please maintains the release PR from Conventional Commits."
-              echo ""
-              echo "This push was a normal commit, **not** a merged release PR, so no version was cut —"
-              echo "release-please just opened/updated (and auto-merged, if it could) the pending release PR."
-              echo ""
-              echo "⏭️ **Build, push & deploy was skipped** (gated on \`release_created == true\`)."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+              echo "> ▶️ **Why this ran:** ${WHY}. No releasable Conventional Commits since the last release, and no unreleased release PR."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-  build-deploy:
-    name: Build, push & deploy
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+  build-push:
+    name: Build & push images
+    needs: release-pr
+    if: needs.release-pr.outputs.pending == 'true'
     runs-on: kio
     container:
       image: harbor.squid-ink.us/politeauthority/polite-cicd:${{ vars.CICD_VERSION }}
@@ -124,12 +157,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}   # build the exact released commit
+          ref: ${{ needs.release-pr.outputs.sha }}   # the release PR's merge commit — what the tag will point at
+
+      - name: Sanity — VERSION matches the release PR
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          v="$(cat VERSION)"
+          [ "$v" = "${{ needs.release-pr.outputs.version }}" ] || { echo "::error::VERSION is ${v} but release PR says ${{ needs.release-pr.outputs.version }}"; exit 1; }
 
       - name: Unit tests
         id: unit
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           set -o pipefail
           task test 2>&1 | tee /tmp/unit.txt
 
@@ -142,14 +180,73 @@ jobs:
 
       - name: Build & push images
         env:
-          RELEASE_VERSION: ${{ needs.release-please.outputs.version }}
+          RELEASE_VERSION: ${{ needs.release-pr.outputs.version }}
+        run: task ci-build-push
+
+      - name: 📋 Build summary
+        if: always()
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          task ci-build-push
+          VERSION="${{ needs.release-pr.outputs.version }}"
+          UNIT=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/unit.txt 2>/dev/null | paste -sd';' - || true)
+          {
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "## ✅ 🐳 Images built & pushed for v${VERSION}"
+              echo ""
+              echo "\`kio-api:${VERSION}\` · \`kio-ui:${VERSION}\` (+ \`:latest\`) → \`harbor.squid-ink.us/politeauthority\`"
+            else
+              echo "## ❌ 🐳 Build failed for v${VERSION} — no tag or release was created"
+              echo ""
+              echo "Release PR #${{ needs.release-pr.outputs.pr }} stays \`autorelease: pending\`; the next push to \`main\` (or a manual run) retries it."
+            fi
+            echo ""
+            echo "🧪 Unit tests: \`${UNIT:-see logs}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  github-release:
+    name: Tag + GitHub Release
+    needs: [release-pr, build-push]
+    runs-on: kio                    # no container (JS action)
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      # Release phase only: finds the merged `autorelease: pending` PR, tags its merge
+      # commit vX.Y.Z, publishes the GitHub Release, relabels it `autorelease: tagged`.
+      - name: Run release-please (GitHub Release only)
+        id: rp
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ secrets.PAT }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+
+      - name: Verify the tag exists
+        run: |
+          [ "${{ steps.rp.outputs.release_created }}" = "true" ] || { echo "::error::release-please did not create a release for v${{ needs.release-pr.outputs.version }}"; exit 1; }
+          [ "${{ steps.rp.outputs.tag_name }}" = "v${{ needs.release-pr.outputs.version }}" ] || { echo "::error::Tagged ${{ steps.rp.outputs.tag_name }} but built v${{ needs.release-pr.outputs.version }}"; exit 1; }
+          echo "## 🏷️ Tagged \`${{ steps.rp.outputs.tag_name }}\` + GitHub Release published" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Stamp private-ops
+    needs: [release-pr, github-release]
+    runs-on: kio
+    outputs:
+      private_ops_sha: ${{ steps.stamp.outputs.sha }}
+    container:
+      image: harbor.squid-ink.us/politeauthority/polite-cicd:${{ vars.CICD_VERSION }}
+      options: '--dns 8.8.8.8'
+      credentials:
+        username: ${{ vars.HARBOR_USER }}
+        password: ${{ secrets.HARBOR_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.github-release.outputs.tag_name }}   # stamp-prd reads VERSION from here
 
       # Production is GitOps: no kubectl here. The private-ops overlay pins
-      # kubernetes-manifests/base to the release tag (which release-please pushed
-      # before this job started) and ArgoCD does the migrate hook + rollout.
+      # kubernetes-manifests/base to the tag just created and ArgoCD does the
+      # migrate hook + rollout.
       - name: Check out private-ops
         uses: actions/checkout@v4
         with:
@@ -159,9 +256,10 @@ jobs:
           fetch-depth: 1
 
       - name: Stamp the private-ops prd overlay and push
+        id: stamp
         env:
           PRIVATE_OPS_DIR: ${{ github.workspace }}/private-ops
-          VERSION: ${{ needs.release-please.outputs.version }}
+          VERSION: ${{ needs.release-pr.outputs.version }}
         run: |
           set -euo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -174,22 +272,71 @@ jobs:
           git commit -m "chore(kio): release kio v${VERSION}"
           # Retry once on a non-fast-forward (another app's release may have landed).
           git push origin HEAD:main || { git pull --rebase origin main && git push origin HEAD:main; }
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: 📋 Release summary
         if: always()
         run: |
-          VERSION="${{ needs.release-please.outputs.version }}"
-          UNIT=$(grep -ohE '[0-9]+ (passed|failed|error)[a-z0-9 ,.]*' /tmp/unit.txt 2>/dev/null | tail -1 || true)
+          VERSION="${{ needs.release-pr.outputs.version }}"
           {
-            echo "# 🚀 Released v${VERSION} 🎉"
-            echo ""
-            echo "> ▶️ **Why this ran:** a release PR was merged (\`release_created == true\`), cutting \`${{ needs.release-please.outputs.tag_name }}\`."
-            echo ""
-            echo "🧪 Unit tests: \`${UNIT:-see logs}\`"
-            echo ""
-            echo "| 🏷️ Version | 🐳 Images | 📦 Registry |"
-            echo "| --- | --- | --- |"
-            echo "| \`v${VERSION}\` | \`kio-api:${VERSION}\` · \`kio-ui:${VERSION}\` (+ \`:latest\`) | \`harbor.squid-ink.us/politeauthority\` |"
-            echo ""
-            echo "📝 private-ops \`kio/kio/kustomization.yaml\` stamped → 🔄 ArgoCD syncs prd (⚠️ kio-migrate PreSync hook → rollout)."
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "# 🚀 Released v${VERSION} 🎉"
+              echo ""
+              echo "| 🏷️ Tag | 🐳 Images | 📝 GitOps |"
+              echo "| --- | --- | --- |"
+              echo "| \`${{ needs.github-release.outputs.tag_name }}\` | \`kio-api:${VERSION}\` · \`kio-ui:${VERSION}\` | private-ops \`kio/kio\` stamped |"
+              echo ""
+              echo "🔄 **ArgoCD sync** runs next: refresh + wait for the rollout (⚠️ kio-migrate PreSync hook first)."
+            else
+              echo "# ❌ v${VERSION} is tagged and its images are in Harbor, but private-ops was NOT stamped"
+              echo ""
+              echo "Re-run this job, or from a laptop: \`task stamp-prd\` in the kio repo at \`v${VERSION}\`, then commit + push private-ops."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  argocd-sync:
+    name: ArgoCD sync
+    needs: [release-pr, github-release, deploy]
+    runs-on: kio                    # in-cluster: reaches the API server via kubernetes.default.svc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.github-release.outputs.tag_name }}
+
+      - name: Install toolchain (task, kubectl)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b "$HOME/bin"
+          KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          curl -fsSL -o "$HOME/bin/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x "$HOME/bin/kubectl"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Configure kubeconfig (kio-ci ServiceAccount, argocd namespace)
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.ARGOCD_KUBECONFIG }}" ]; then
+            echo "::warning::secrets.ARGOCD_KUBECONFIG is not set — skipping the ArgoCD nudge; it will pick up private-ops on its own poll (~3–6 min)."
+            echo "skip=true" >> "$GITHUB_ENV"; exit 0
+          fi
+          mkdir -p ~/.kube
+          echo "${{ secrets.ARGOCD_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Refresh the kio Application and wait for the rollout
+        if: env.skip != 'true'
+        run: task prd-sync REV=${{ needs.deploy.outputs.private_ops_sha }}
+
+      - name: 📋 Sync summary
+        if: always()
+        run: |
+          {
+            if [ "${skip:-}" = "true" ]; then
+              echo "## ⏭️ ArgoCD nudge skipped (no ARGOCD_KUBECONFIG) — it syncs on its own poll"
+            elif [ "${{ job.status }}" = "success" ]; then
+              echo "## ✅ 🔄 ArgoCD synced private-ops \`${{ needs.deploy.outputs.private_ops_sha }}\` — prod is on v${{ needs.release-pr.outputs.version }}"
+            else
+              echo "## ❌ 🔄 ArgoCD did not reach Synced/Healthy in time — check the \`kio\` Application (migrate hook?)"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

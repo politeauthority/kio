@@ -1,0 +1,80 @@
+name: Verify ArgoCD access
+
+# 🔎 Diagnostic: proves the ARGOCD_KUBECONFIG secret works from the in-cluster runner
+# exactly as the release workflow's `argocd-sync` job uses it — reach the API server,
+# identify the principal, and check it may get/patch the `kio` Application. Read-only:
+# nothing is annotated. Run it from the Actions tab whenever the secret is rotated.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: [".github/workflows/verify-argocd-access.yaml"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: kio
+    steps:
+      - name: Install kubectl
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          curl -fsSL -o "$HOME/bin/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x "$HOME/bin/kubectl"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Decode kubeconfig
+        run: |
+          set -euo pipefail
+          [ -n "${{ secrets.ARGOCD_KUBECONFIG }}" ] || { echo "::error::secrets.ARGOCD_KUBECONFIG is not set"; exit 1; }
+          mkdir -p ~/.kube
+          echo "${{ secrets.ARGOCD_KUBECONFIG }}" | base64 -d > ~/.kube/config || { echo "::error::secret is not valid base64"; exit 1; }
+          chmod 600 ~/.kube/config
+          server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+          echo "API server: ${server}"
+          echo "server=${server}" >> "$GITHUB_ENV"
+
+      - name: Reach the API server + identify the principal
+        run: |
+          set -euo pipefail
+          kubectl version 2>&1 | sed 's/^/  /'
+          kubectl auth whoami 2>/dev/null || echo "(auth whoami unavailable on this cluster/client; continuing)"
+
+      - name: Check the permissions the release workflow needs
+        run: |
+          set -euo pipefail
+          fail=0
+          for verb in get patch; do
+            if kubectl auth can-i "$verb" applications.argoproj.io/kio -n argocd >/dev/null 2>&1; then
+              echo "✅ can ${verb} applications.argoproj.io/kio in argocd"
+            else
+              echo "::error::cannot ${verb} applications.argoproj.io/kio in argocd"; fail=1
+            fi
+          done
+          [ "$fail" = 0 ]
+          # Read-only proof the object is actually reachable with this identity.
+          kubectl -n argocd get application kio -o jsonpath='kio Application: sync={.status.sync.status} health={.status.health.status} rev={.status.sync.revision}{"\n"}'
+          # Scope report (informational): a scoped ServiceAccount answers "no" here; an admin kubeconfig answers "yes".
+          if kubectl auth can-i '*' '*' --all-namespaces >/dev/null 2>&1; then
+            echo "::warning::This identity is cluster-admin. Consider the scoped kio-ci ServiceAccount (colfax-ops#31 + scripts/argocd-kubeconfig.sh)."
+          else
+            echo "ℹ️ identity is not cluster-admin (scoped) — good."
+          fi
+
+      - name: 📋 Summary
+        if: always()
+        run: |
+          {
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "## ✅ 🔎 ARGOCD_KUBECONFIG works from the \`kio\` runner"
+              echo ""
+              echo "API server \`${server:-?}\` reachable; identity may \`get\`/\`patch\` the \`kio\` Application in \`argocd\`. The release workflow's \`argocd-sync\` job will run."
+            else
+              echo "## ❌ 🔎 ARGOCD_KUBECONFIG does not work — see the failing step"
+              echo ""
+              echo "Common causes: server address not reachable from in-cluster runners (use a LAN address or \`https://kubernetes.default.svc\`), token expired, or missing get/patch on applications.argoproj.io."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
