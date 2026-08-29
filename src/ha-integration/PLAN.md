@@ -33,9 +33,10 @@ maps each kiosk to a HA Device. See the dev doc for the development loop.
 ## Backlog
 
 ### Phase 2 — playlist & tab control
-- [ ] Playlist `media_player` (gated on `playlist`): play/stop/next from
-      `playlist/play|stop|goto`, state from `playlist_state`. Needs `GET /playlists`
-      to populate source options.
+- [x] Playlist `media_player` (one per kiosk): play/pause/stop/next/previous via
+      `playlist/play|pause|resume|stop|goto`, state from `playlist_state`
+      (`paused` flag added agent-side), `select_source` attaches a playlist from
+      `GET /playlists` and starts it.
 - [ ] Tab-cycle `switch` (`tabs/cycle/start|stop`, state from `tab_cycle_state`).
 - [ ] Active-tab `select` from `browser_tabs` + `kio.open_tab` / `kio.navigate_tab`
       / `kio.close_tab` services (`browsers` CRUD).

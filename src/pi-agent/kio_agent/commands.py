@@ -232,6 +232,24 @@ def _cmd_stop_playlist(cmd: dict, command_id: str | None) -> bool:
     return True
 
 
+def _cmd_pause_playlist(cmd: dict, command_id: str | None) -> bool:
+    if runtime.agent and runtime.agent._player is not None:
+        runtime.agent._player.pause()
+        return True
+    logger.warning("pause_playlist: no active playlist player")
+    _report_command("pause_playlist", False, "No playlist is playing", command_id)
+    return False
+
+
+def _cmd_resume_playlist(cmd: dict, command_id: str | None) -> bool:
+    if runtime.agent and runtime.agent._player is not None:
+        runtime.agent._player.resume()
+        return True
+    logger.warning("resume_playlist: no active playlist player")
+    _report_command("resume_playlist", False, "No playlist is playing", command_id)
+    return False
+
+
 def _cmd_sync_playlist(cmd: dict, command_id: str | None) -> bool:
     items = cmd.get("items", [])
     playlist_id = cmd.get("playlist_id", "unknown")
@@ -613,6 +631,8 @@ def _cmd_set_brightness(cmd: dict, command_id: str | None) -> bool:
 _DISPATCH = {
     "play_playlist": _cmd_play_playlist,
     "stop_playlist": _cmd_stop_playlist,
+    "pause_playlist": _cmd_pause_playlist,
+    "resume_playlist": _cmd_resume_playlist,
     "sync_playlist": _cmd_sync_playlist,
     "playlist_goto": _cmd_playlist_goto,
     "start_tab_cycle": _cmd_start_tab_cycle,

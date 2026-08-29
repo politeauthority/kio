@@ -157,6 +157,16 @@ the real environment (DNS, auth, an actual kiosk).
 
 ---
 
+## Entities per kiosk
+
+Besides the sensors/buttons/switches, every kiosk gets a `media_player.<name>_playlist`
+that wraps playlist control: `playing` / `paused` / `idle` (from `playlist_state`, which
+the agent now reports with a `paused` flag), `off` when the kiosk is offline. Play,
+pause, stop, next/previous (via `playlist/goto`) and **source** — the source list is
+`GET /playlists` by name; selecting one attaches it (`PUT /kiosks/{id}/playlist`) and
+starts it. So an automation can do `media_player.select_source` to put a playlist on a
+node and `media_player.media_pause` / `media_play` to hold and continue it.
+
 ## Adding a new entity
 
 Each platform file uses the shared `setup_kio_platform(hass, entry, async_add_entities, factory)`

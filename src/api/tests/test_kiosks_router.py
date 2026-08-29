@@ -382,3 +382,54 @@ async def test_list_meta_kiosk_not_found(client):
     with patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=None):
         r = await client.get(f"/kiosks/{uuid.uuid4()}/meta")
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /kiosks/{id}/playlist/pause + /resume
+# ---------------------------------------------------------------------------
+
+
+async def test_pause_playlist_dispatches_pause_command(client):
+    kiosk = make_kiosk(playlist_id=uuid.uuid4(), playlist_state={"idx": 1, "total": 3, "paused": False})
+    with (
+        patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=kiosk),
+        patch("app.routers.kiosks.publish_command") as mock_pub,
+    ):
+        r = await client.post(f"/kiosks/{kiosk.id}/playlist/pause")
+
+    assert r.status_code == 204
+    kiosk_id, payload = mock_pub.call_args.args
+    assert kiosk_id == str(kiosk.id)
+    assert payload["command"] == "pause_playlist"
+    assert "command_id" in payload
+
+
+async def test_resume_playlist_dispatches_resume_command(client):
+    kiosk = make_kiosk(playlist_id=uuid.uuid4(), playlist_state={"idx": 1, "total": 3, "paused": True})
+    with (
+        patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=kiosk),
+        patch("app.routers.kiosks.publish_command") as mock_pub,
+    ):
+        r = await client.post(f"/kiosks/{kiosk.id}/playlist/resume")
+
+    assert r.status_code == 204
+    assert mock_pub.call_args.args[1]["command"] == "resume_playlist"
+
+
+async def test_pause_and_resume_require_a_playing_playlist(client):
+    kiosk = make_kiosk(playlist_id=uuid.uuid4(), playlist_state=None)
+    for action in ("pause", "resume"):
+        with (
+            patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=kiosk),
+            patch("app.routers.kiosks.publish_command") as mock_pub,
+        ):
+            r = await client.post(f"/kiosks/{kiosk.id}/playlist/{action}")
+        assert r.status_code == 400, action
+        mock_pub.assert_not_called()
+
+
+async def test_pause_and_resume_kiosk_not_found(client):
+    for action in ("pause", "resume"):
+        with patch("app.routers.kiosks.kiosk_service.get_by_id", new_callable=AsyncMock, return_value=None):
+            r = await client.post(f"/kiosks/{uuid.uuid4()}/playlist/{action}")
+        assert r.status_code == 404, action

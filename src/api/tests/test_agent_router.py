@@ -1,6 +1,9 @@
 """Router tests for /agent/* — get_node_kiosk is overridden with a fixed kiosk."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+from tests.conftest import make_playlist
 
 # ---------------------------------------------------------------------------
 # POST /agent/heartbeat
@@ -165,6 +168,26 @@ async def test_get_state_returns_tabs_and_tab_cycle(agent_client):
         "interval_seconds": 90,
         "tab_order": ["https://b.example", "https://a.example"],
     }
+
+
+async def test_get_state_carries_the_paused_flag(agent_client):
+    client, kiosk, session = agent_client
+    playlist = make_playlist(
+        name="Lobby loop",
+        refresh_interval_seconds=0,
+        items=[SimpleNamespace(url="https://a.example", duration_seconds=30)],
+    )
+    kiosk.playlist_id = playlist.id
+    kiosk.playlist_state = {"idx": 0, "total": 1, "paused": True}
+    session.execute.return_value.scalar_one_or_none.return_value = playlist
+
+    r = await client.get("/agent/state")
+
+    assert r.status_code == 200
+    body = r.json()["playlist"]
+    assert body["name"] == "Lobby loop"
+    assert body["last_idx"] == 0
+    assert body["paused"] is True
 
 
 async def test_get_state_no_saved_state(agent_client):

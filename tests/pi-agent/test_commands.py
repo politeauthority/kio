@@ -15,6 +15,8 @@ from kio_agent import commands, runtime
 EXPECTED_COMMANDS = {
     "play_playlist",
     "stop_playlist",
+    "pause_playlist",
+    "resume_playlist",
     "sync_playlist",
     "playlist_goto",
     "start_tab_cycle",
@@ -215,3 +217,37 @@ def test_set_resolution_missing_args_reports_failure_only(reports):
     assert len(reports) == 1
     assert reports[0]["success"] is False
     assert reports[0]["message"] == "Missing output or mode"
+
+
+# --- pause / resume ----------------------------------------------------------
+
+
+def test_pause_playlist_pauses_active_player(agent, reports):
+    agent._player = MagicMock()
+    commands.handle_command(_payload("pause_playlist"))
+    agent._player.pause.assert_called_once()
+    assert reports[-1]["command"] == "pause_playlist"
+    assert reports[-1]["success"] is True
+
+
+def test_resume_playlist_resumes_active_player(agent, reports):
+    agent._player = MagicMock()
+    commands.handle_command(_payload("resume_playlist"))
+    agent._player.resume.assert_called_once()
+    assert reports[-1]["success"] is True
+
+
+def test_pause_without_player_reports_failure(agent, reports):
+    agent._player = None
+    commands.handle_command(_payload("pause_playlist"))
+    assert len(reports) == 1
+    assert reports[0]["command"] == "pause_playlist"
+    assert reports[0]["success"] is False
+    assert reports[0]["command_id"] == "cid-1"
+
+
+def test_resume_without_player_reports_failure(agent, reports):
+    agent._player = None
+    commands.handle_command(_payload("resume_playlist"))
+    assert len(reports) == 1
+    assert reports[0]["success"] is False

@@ -38,7 +38,9 @@ class PlaylistPlayer:
     rotation; it reloads tabs while they're hidden to avoid a visible flash.
 
     Commands are delivered via an internal queue so goto() can interrupt a
-    sleeping duration without polling.
+    sleeping duration without polling. pause() holds the current item on screen
+    indefinitely (the refresh loop keeps running so it stays fresh); resume()
+    restarts that item's timer from zero.
     """
 
     def __init__(
@@ -48,6 +50,7 @@ class PlaylistPlayer:
         playlist_name: str = "",
         start_idx: int = 0,
         refresh_seconds: int = PLAYLIST_REFRESH_SECONDS,
+        start_paused: bool = False,
     ) -> None:
         self.playlist_id = playlist_id
         self._playlist_name = playlist_name or playlist_id
@@ -57,6 +60,10 @@ class PlaylistPlayer:
         self._tabs: list[dict] = []  # ordered CDP tab dicts, one per item
         self._current_idx = 0
         self._item_started_at: float = 0.0
+        # Paused: the rotation loop waits for a command instead of the item's
+        # duration. Seeded from start_paused so a boot-time resume of a paused
+        # playlist lands paused on the same item rather than silently advancing.
+        self._paused = start_paused
         self._lock = threading.Lock()
         self._cmd: queue.Queue = queue.Queue()
         self._stop_event = threading.Event()
@@ -135,8 +142,22 @@ class PlaylistPlayer:
             self._refresh_tab(on_deck)
 
     def goto(self, idx: int) -> None:
-        """Jump to a specific playlist item by index, resetting its duration timer."""
+        """Jump to a specific playlist item by index, resetting its duration timer.
+        While paused the jump happens but playback stays paused on the new item."""
         self._cmd.put(("goto", idx))
+
+    def pause(self) -> None:
+        """Hold the current item on screen until resume()/goto()/stop()."""
+        self._cmd.put(("pause", None))
+
+    def resume(self) -> None:
+        """Continue rotating; the current item's duration restarts from now."""
+        self._cmd.put(("resume", None))
+
+    @property
+    def paused(self) -> bool:
+        with self._lock:
+            return self._paused
 
     def current_state(self) -> dict:
         with self._lock:
@@ -148,6 +169,7 @@ class PlaylistPlayer:
                     else None
                 ),
                 "total": len(self._items),
+                "paused": self._paused,
             }
 
     def _preload(self) -> None:
@@ -220,8 +242,13 @@ class PlaylistPlayer:
             # loaded by the time it rotates in.
             self._prerefresh_on_deck(idx)
 
+            with self._lock:
+                paused = self._paused
+            if paused:
+                logger.info("Playlist %s paused on [%d/%d] %s", self.playlist_id, idx + 1, n, item["url"])
             try:
-                cmd, arg = self._cmd.get(timeout=duration)
+                # Paused: no deadline — only a command moves us on.
+                cmd, arg = self._cmd.get(timeout=None if paused else duration)
             except queue.Empty:
                 # Duration elapsed normally — advance to next item
                 idx = (idx + 1) % n
@@ -245,6 +272,16 @@ class PlaylistPlayer:
 
             if cmd == "stop":
                 break
+            elif cmd == "pause":
+                with self._lock:
+                    self._paused = True
+                continue
+            elif cmd == "resume":
+                with self._lock:
+                    self._paused = False
+                    self._item_started_at = time.time()
+                logger.info("Playlist %s resumed on [%d/%d]", self.playlist_id, idx + 1, n)
+                continue
             elif cmd == "goto":
                 target = max(0, min(arg, n - 1))
                 item_url = self._items[target].get("url", "?")
