@@ -72,6 +72,7 @@ What it configures:
 | Redirect URIs | one `/callback` URL per kio environment (strict match) |
 | Scopes | `openid profile email offline_access` |
 | Signing key | `authentik Self-signed Certificate` (override with `AUTHENTIK_SIGNING_KEY`) — RS256 |
+| Grant types | `authorization_code`, `refresh_token` (Authentik's per-provider allow-list; empty = every login fails with "Invalid grant_type for provider") |
 | Access token validity | 24h |
 
 `offline_access` is what lets the UI get a refresh token and renew the session in
@@ -84,7 +85,7 @@ the dev login, so the two can never be confused). If the discovery document show
 `"id_token_signing_alg_values_supported": ["HS256"]`, the key isn't set.
 
 Re-running the script is safe — it syncs the redirect URIs, scopes and signing key
-on the existing provider (found through the `kio` application, so a provider that
+on the existing provider — redirect URIs, scopes, grant types, signing key (found through the `kio` application, so a provider that
 was created by hand is updated rather than duplicated).
 
 In production the API config lives in private-ops (`kio/kio/api-configmap-patch.yaml`);
