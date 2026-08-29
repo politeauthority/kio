@@ -8,6 +8,8 @@ def make_kiosk(**overrides) -> dict:
         "name": "Lobby",
         "hostname": "kio-lobby",
         "current_url": "https://example.com/dash",
+        "current_url_name": None,
+        "current_saved_url_id": None,
         "status": "online",
         "last_seen": "2026-06-13T12:00:00+00:00",
         "features": [],

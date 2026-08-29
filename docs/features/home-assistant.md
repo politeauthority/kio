@@ -11,7 +11,7 @@ Each kiosk in kio becomes a single Device in HA. The entities created depend on 
 | Entity | Type | Notes |
 |---|---|---|
 | Online | Binary sensor | Connectivity class — true when `status == "online"` |
-| Current URL | Sensor | The URL currently displayed in Chromium |
+| Current URL | Sensor | The page Chromium is showing. State is the saved URL's name when the page is registered under Settings → URLs, else the raw URL. Attributes: `url` (always the address), `saved_url_name`, `saved_url_id` |
 | Status | Sensor | Raw status string (online/offline/unknown) |
 | Last Seen | Sensor | Timestamp of the last heartbeat received |
 | Uptime | Sensor | System uptime (diagnostic) |
@@ -27,6 +27,7 @@ Each kiosk in kio becomes a single Device in HA. The entities created depend on 
 | Standby (CEC) | Button | Sends CEC standby signal — requires `cec` capability |
 | Wake (CEC) | Button | Sends CEC wake signal — requires `cec` capability |
 | Display Power | Switch | Turns the display on/off — requires `display_power` capability |
+| Page | Select | Lists kio's saved URLs by name; selecting one navigates the kiosk there. State is the current page's saved name, or unknown when the page isn't a saved URL |
 | Display Input | Select | Switches inputs — requires `input_switch` capability. Options are the inputs left visible in the kiosk's **Input Configuration** (edit page), shown under the names given there (defaults: HDMI 1, HDMI 2, DP 1, DP 2). The input the display is on is always listed, hidden or not. `input_key` attribute carries the raw key (`hdmi1`…) |
 | Brightness | Number | Display luminance 0–100 — requires `brightness` capability |
 
