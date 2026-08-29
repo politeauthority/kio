@@ -823,6 +823,8 @@ class KioAgent:
             s = cached
             source = "cache"
 
+        self._adopt_server_features(s.get("features"))
+
         self._hb_interval = max(5, int(s.get("heartbeat_interval_seconds", self._hb_interval)))
         self._hb_jitter = max(0, int(s.get("heartbeat_jitter_seconds", self._hb_jitter)))
         self._metadata_interval = max(60, int(s.get("metadata_interval_seconds", self._metadata_interval)))
@@ -889,6 +891,27 @@ class KioAgent:
                 f"[{source}] heartbeat={self._hb_interval}s jitter={self._hb_jitter}s "
                 f"metadata={self._metadata_interval}s checkin={self._settings_checkin}s",
             )
+
+    def _adopt_server_features(self, server_features) -> None:
+        """Restore capabilities from the server when this node has none locally.
+
+        The node's own kiosk.yaml is what gates hardware commands, and it has been
+        wiped before (issue #50: a self-update that couldn't read the block). The
+        server keeps a copy (last advertised + last detect + admin overrides), so
+        when the local list is empty and the server's isn't, take the server's and
+        persist it. Never overrides a non-empty local list — detection stays the
+        only thing that changes an existing set — and an empty server list means
+        nothing to restore, so a node with genuinely no features stays that way.
+        """
+        if self.features or not server_features:
+            return
+        feats = sorted({str(f) for f in server_features if f})
+        if not feats:
+            return
+        self.features = feats
+        save_features(feats)
+        logger.info("Local features were empty — restored from server: %s", feats)
+        _report_command("features_restored", True, f"Restored from server: {', '.join(feats)}")
 
     def _sync_settings(self, command_id: str | None = None) -> None:
         """Pull the latest settings from the server and apply them live.

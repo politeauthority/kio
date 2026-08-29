@@ -57,8 +57,11 @@ def _probe_vcp(code: str, attempts: int = 3) -> tuple[str, dict]:
 
 def _probe_cec(attempts: int = 3) -> tuple[str, dict]:
     """Probe HDMI-CEC. 'supported' = adapter present and a CEC display is on the bus;
-    'unsupported' = no adapter, or the bus reports no display (physical addr f.f.f.f);
-    'unknown' = the cec-ctl call errored (retried)."""
+    'unsupported' = no CEC adapter at all; 'unknown' = the cec-ctl call errored
+    (retried), or the adapter is there but the bus reports no display (physical
+    address f.f.f.f). That last case is what a TV in standby looks like, so it must
+    not be read as "this node can't do CEC" — a detect run with the TV off would
+    otherwise drop a working capability."""
     cec_cmd = ["sudo", "cec-ctl", "-d", "/dev/cec0", "--playback", "-S"]
     if not os.path.exists("/dev/cec0"):
         return "unsupported", {"cmd": " ".join(cec_cmd), "error": "/dev/cec0 not found"}
@@ -79,7 +82,7 @@ def _probe_cec(attempts: int = 3) -> tuple[str, dict]:
                 "attempts": attempt,
             }
             if r.returncode == 0:
-                return ("supported" if physical != "f.f.f.f" else "unsupported"), info
+                return ("supported" if physical != "f.f.f.f" else "unknown"), info
         except Exception as exc:
             info = {"cmd": " ".join(cec_cmd), "error": str(exc), "attempts": attempt}
         if attempt < attempts:

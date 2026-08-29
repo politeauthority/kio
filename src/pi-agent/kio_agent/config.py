@@ -32,13 +32,24 @@ from kio_agent.runtime import AGENT_VERSION, BOOT_ID
 # ---------------------------------------------------------------------------
 
 
+class _IndentedDumper(yaml.SafeDumper):
+    """PyYAML writes block sequences under a mapping key flush-left (``- item``
+    at column 0). setup.sh's line-based reader — which carries features across a
+    reinstall — expects them indented, and reading ``- item`` at column 0 as "next
+    top-level key" is exactly how a self-update used to drop every feature
+    (issue #50). Indent sequences so both readers agree."""
+
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
 def save_features(features: list[str]) -> None:
     try:
         with open(CONFIG_FILE) as f:
-            cfg = yaml.safe_load(f)
-        cfg["features"] = features
+            cfg = yaml.safe_load(f) or {}
+        cfg["features"] = list(features)
         with open(CONFIG_FILE, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(cfg, f, Dumper=_IndentedDumper, default_flow_style=False, allow_unicode=True)
         logger.info("Features persisted to config: %s", features)
     except PermissionError:
         logger.warning("Permission denied writing features to %s", CONFIG_FILE)

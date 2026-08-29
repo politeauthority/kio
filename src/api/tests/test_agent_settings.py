@@ -1,6 +1,7 @@
 """Tests for agent settings: pure service helpers + the dashboard/agent routers."""
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -128,7 +129,7 @@ async def test_agent_settings_endpoint_defaults(agent_client):
     client, kiosk, session = agent_client
     r = await client.get("/agent/settings")
     assert r.status_code == 200
-    assert r.json() == ss.AGENT_SETTING_DEFAULTS
+    assert r.json() == {**ss.AGENT_SETTING_DEFAULTS, "features": []}
 
 
 # ---------------------------------------------------------------------------
@@ -177,3 +178,44 @@ async def test_notify_all_nodes_publishes_sync_settings_per_kiosk():
     assert pub.call_count == 3
     for call in pub.call_args_list:
         assert call.args[1] == {"command": "sync_settings"}
+
+
+# ---------------------------------------------------------------------------
+# GET /agent/settings (node) — server copy of features for restore
+# ---------------------------------------------------------------------------
+
+
+def _row_results(*rows):
+    """session.execute side-effect: first the global-settings select (no rows),
+    then one result per given row answering scalar_one_or_none() with it."""
+    results = []
+    for row in (None, *rows):
+        r = MagicMock()
+        r.scalar_one_or_none.return_value = row
+        r.scalars.return_value.all.return_value = []
+        results.append(r)
+    return results
+
+
+async def test_agent_settings_features_merge_advertised_detected_and_overrides(agent_client):
+    client, kiosk, session = agent_client
+    kiosk.features = ["cec"]  # brightness missing: stripped by the gate at last heartbeat
+    detect_log = SimpleNamespace(capabilities=["brightness", "cec", "display_power"])
+    overrides = SimpleNamespace(value={"display_power": False, "input_switch": True})
+    session.execute = AsyncMock(side_effect=_row_results(detect_log, overrides))
+
+    r = await client.get("/agent/settings")
+
+    assert r.status_code == 200
+    assert r.json()["features"] == ["brightness", "cec", "input_switch"]
+
+
+async def test_agent_settings_features_empty_when_node_has_none(agent_client):
+    client, kiosk, session = agent_client
+    kiosk.features = []
+    session.execute = AsyncMock(side_effect=_row_results(None, None))
+
+    r = await client.get("/agent/settings")
+
+    assert r.status_code == 200
+    assert r.json()["features"] == []
