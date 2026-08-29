@@ -13,9 +13,12 @@ name: Tests
 on:
   pull_request:
     branches: [main, staging]
+  # Also on main itself so the README status badge reflects the default branch.
+  push:
+    branches: [main]
 
 concurrency:
-  group: tests-${{ github.event.pull_request.number }}
+  group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
