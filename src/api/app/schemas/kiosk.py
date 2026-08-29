@@ -22,6 +22,11 @@ class KioskRead(BaseModel):
     name: str
     hostname: str
     current_url: str | None
+    # The saved URL (Settings → URLs) the current page was registered as, if any.
+    # Resolved by the API (services/url_names) so every consumer shows the same
+    # name; absent/None when the page isn't a saved URL.
+    current_url_name: str | None = None
+    current_saved_url_id: uuid.UUID | None = None
     status: str
     last_seen: datetime | None
     features: list[str]

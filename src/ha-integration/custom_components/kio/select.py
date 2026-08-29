@@ -47,6 +47,8 @@ async def async_setup_entry(
 ) -> None:
     def factory(coordinator: KioCoordinator, kiosk_id: str, added: frozenset, first: bool) -> list:
         entities = []
+        if first:
+            entities.append(KioPageSelect(coordinator, kiosk_id))
         if "input_switch" in added:
             entities.append(KioInputSelect(coordinator, kiosk_id))
         return entities
@@ -88,3 +90,51 @@ class KioInputSelect(KioEntity, SelectEntity):
         if key is None:
             raise ValueError(f"{option!r} is not an available input for this kiosk")
         await self.coordinator.set_input(self._kiosk_id, key)
+
+
+def page_options(saved_urls: list[dict]) -> dict[str, str]:
+    """Saved URLs as {name: url}. A name registered twice gets its URL's host
+    appended so both stay selectable."""
+    options: dict[str, str] = {}
+    for row in saved_urls:
+        name, url = row["name"], row["url"]
+        if name in options and options[name] != url:
+            host = url.split("//", 1)[-1].split("/", 1)[0]
+            name = f"{name} ({host})"
+        options[name] = url
+    return options
+
+
+class KioPageSelect(KioEntity, SelectEntity):
+    """Navigate a kiosk to one of kio's saved URLs by name.
+
+    Options are the saved URLs' names. The state is the name of the page the
+    kiosk is on when that page is a saved URL, else unknown — the raw address is
+    on the Current URL sensor. Selecting an option navigates the kiosk there.
+    """
+
+    _attr_name = "Page"
+    _attr_icon = "mdi:bookmark-outline"
+
+    def __init__(self, coordinator: KioCoordinator, kiosk_id: str) -> None:
+        super().__init__(coordinator, kiosk_id)
+        self._attr_unique_id = f"{kiosk_id}_page"
+
+    @property
+    def options(self) -> list[str]:
+        return list(page_options(self.coordinator.saved_urls))
+
+    @property
+    def current_option(self) -> str | None:
+        name = self._kiosk.get("current_url_name")
+        if not name:
+            return None
+        # The API's match is authoritative; only echo it if it's a listed option
+        # (the saved-URL poll can lag the kiosk poll by one cycle).
+        return name if name in page_options(self.coordinator.saved_urls) else None
+
+    async def async_select_option(self, option: str) -> None:
+        url = page_options(self.coordinator.saved_urls).get(option)
+        if url is None:
+            raise ValueError(f"{option!r} is not a saved URL")
+        await self.coordinator.navigate(self._kiosk_id, url)

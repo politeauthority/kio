@@ -47,6 +47,11 @@ class KioStatusSensor(KioEntity, SensorEntity):
 
 
 class KioUrlSensor(KioEntity, SensorEntity):
+    """The page a kiosk is showing. When the page is a saved URL in kio, the
+    state is that URL's name; otherwise the raw URL. The URL itself is always in
+    the `url` attribute, so automations that compare addresses use that, not the
+    state."""
+
     _attr_name = "Current URL"
     _attr_icon = "mdi:web"
 
@@ -56,7 +61,15 @@ class KioUrlSensor(KioEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        return self._kiosk.get("current_url")
+        return self._kiosk.get("current_url_name") or self._kiosk.get("current_url")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "url": self._kiosk.get("current_url"),
+            "saved_url_name": self._kiosk.get("current_url_name"),
+            "saved_url_id": self._kiosk.get("current_saved_url_id"),
+        }
 
 
 class KioLastSeenSensor(KioEntity, SensorEntity):

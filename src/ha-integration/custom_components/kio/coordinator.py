@@ -51,6 +51,10 @@ class KioCoordinator(DataUpdateCoordinator):
         # One session per coordinator, created lazily on the event loop and
         # reused across polls and commands (closed in async_unload_entry).
         self._session_obj: aiohttp.ClientSession | None = None
+        # Saved URLs (Settings → URLs in kio), refreshed alongside the kiosks. Each
+        # is {"id", "name", "url", ...}. Kept on the coordinator rather than in
+        # `data` so the kiosk-keyed shape every entity reads stays as it is.
+        self.saved_urls: list[dict] = []
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=SCAN_INTERVAL)
 
     @property
@@ -77,11 +81,25 @@ class KioCoordinator(DataUpdateCoordinator):
             ) as resp:
                 resp.raise_for_status()
                 kiosks = await resp.json()
+            await self._refresh_saved_urls()
             return {k["id"]: k for k in kiosks}
         except aiohttp.ClientResponseError as err:
             raise UpdateFailed(f"kio API returned {err.status}") from err
         except Exception as err:
             raise UpdateFailed(f"Error communicating with kio API: {err}") from err
+
+    async def _refresh_saved_urls(self) -> None:
+        """Best effort: a failure here keeps the last list and never fails the poll,
+        since the kiosk entities don't depend on it."""
+        try:
+            async with self._session().get(
+                f"{self.api_url}/saved-urls", headers=self._headers, timeout=_TIMEOUT
+            ) as resp:
+                resp.raise_for_status()
+                rows = await resp.json()
+            self.saved_urls = [r for r in rows if r.get("name") and r.get("url")]
+        except Exception as err:  # noqa: BLE001 — logged, not raised
+            _LOGGER.debug("Saved URL refresh failed, keeping previous list: %s", err)
 
     async def _command(self, method: str, path: str, json: dict | None = None) -> None:
         """Send a write to the kio API, then pull fresh state immediately.

@@ -15,6 +15,7 @@ from app.models.playlist import Playlist
 from app.mqtt import publish_command, publish_nav
 from app.schemas.kiosk import KioskCreate, KioskRead, KioskUpdate
 from app.services import kiosk_service
+from app.services.url_names import annotate_url_names
 from app.version import agent_update_ref
 
 router = APIRouter(prefix="/kiosks", tags=["kiosks"])
@@ -36,7 +37,9 @@ def dispatch_command(session, kiosk_id, *, command: str, subject: str | None = N
 
 @router.get("", response_model=list[KioskRead])
 async def list_kiosks(session: AsyncSession = Depends(get_session)):
-    return await kiosk_service.get_all(session)
+    kiosks = await kiosk_service.get_all(session)
+    await annotate_url_names(session, kiosks)
+    return kiosks
 
 
 @router.post("", response_model=KioskRead, status_code=201)
@@ -49,6 +52,7 @@ async def get_kiosk(kiosk_id: uuid.UUID, session: AsyncSession = Depends(get_ses
     kiosk = await kiosk_service.get_by_id(session, kiosk_id)
     if kiosk is None:
         raise HTTPException(status_code=404, detail="Kiosk not found")
+    await annotate_url_names(session, [kiosk])
     return kiosk
 
 
