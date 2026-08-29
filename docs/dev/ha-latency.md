@@ -132,7 +132,7 @@ Result: _pending_
 | # | Strategy | PR | Status | pause/play median | navigate median |
 |---|---|---|---|---|---|
 | — | baseline v0.8.2 | — | measured | ~40 s | ~40 s |
-| 1 | heartbeat after commands | — | in progress | | |
+| 1 | heartbeat after commands | #68 | PR open — measure once nodes run it | | |
 | 2 | delayed post-write refresh | — | | | |
 | 3 | SSE push in HA | — | | | |
 | 4 | shorter heartbeat | — | | | |
@@ -141,3 +141,4 @@ Result: _pending_
 ## Log
 
 - 2026-08-29 — traced the round trip, wrote this plan, started on strategy 1.
+- 2026-08-29 — strategy 1 implemented: `handle_command` schedules a heartbeat 1 s after any state-changing command; the nav topic handler does the same after `navigate`. Measure after the agent update lands on a node.

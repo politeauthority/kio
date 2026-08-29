@@ -31,7 +31,7 @@ from kio_agent.cdp import (
     is_safe_url,
     navigate,
 )
-from kio_agent.commands import _report_update_result, handle_command
+from kio_agent.commands import _report_update_result, _schedule_state_heartbeat, handle_command
 from kio_agent.config import (
     _display_fingerprint,
     _load_hw_state,
@@ -1023,6 +1023,9 @@ class KioAgent:
                     self._stop_tab_cycle()
                     navigate(url)
                     _report_command(f"navigate: {url}", True, command_id=cid)
+                    # current_url changed: report it now rather than on the next
+                    # routine heartbeat (docs/dev/ha-latency.md, strategy 1).
+                    _schedule_state_heartbeat()
                 else:
                     _report_command("navigate", False, "Empty URL", command_id=cid)
             except Exception as exc:

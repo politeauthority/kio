@@ -661,6 +661,57 @@ _DISPATCH = {
 }
 
 
+# Commands after which the kiosk's reported state (playlist_state, tabs, current
+# URL, display, input, brightness) differs from what the last heartbeat said.
+# The next routine heartbeat is up to heartbeat_interval_seconds away, so the
+# dashboard and Home Assistant would show stale state for that long; instead,
+# push one shortly after the handler returns. Shortly, not immediately: several
+# handlers only *queue* the change (PlaylistPlayer commands, tab activation),
+# so a heartbeat sent from the same thread would still see the old state.
+STATE_CHANGING_COMMANDS = frozenset(
+    {
+        "play_playlist",
+        "stop_playlist",
+        "pause_playlist",
+        "resume_playlist",
+        "sync_playlist",
+        "playlist_goto",
+        "start_tab_cycle",
+        "stop_tab_cycle",
+        "open_tab",
+        "close_tab",
+        "activate_tab",
+        "navigate_tab",
+        "display_off",
+        "display_on",
+        "standby",
+        "wake",
+        "set_input",
+        "set_brightness",
+        "set_resolution",
+    }
+)
+STATE_HEARTBEAT_DELAY = 1.0
+
+
+def _schedule_state_heartbeat(delay: float = STATE_HEARTBEAT_DELAY) -> None:
+    """Post a heartbeat after `delay` seconds so the API (and everything polling
+    it) sees the state a command just changed, instead of waiting out the interval."""
+    agent = runtime.agent
+    if agent is None:
+        return
+
+    def _fire() -> None:
+        try:
+            agent._post_heartbeat()
+        except Exception as exc:  # noqa: BLE001 — a missed early heartbeat is not an error
+            logger.debug("post-command heartbeat failed: %s", exc)
+
+    timer = threading.Timer(delay, _fire)
+    timer.daemon = True
+    timer.start()
+
+
 def handle_command(payload: bytes) -> None:
     try:
         cmd = json.loads(payload)
@@ -686,3 +737,6 @@ def handle_command(payload: bytes) -> None:
     except Exception as exc:
         logger.error("Command %s failed: %s", command, exc)
         _report_command(command or "unknown", False, str(exc), command_id=command_id)
+        return
+    if command in STATE_CHANGING_COMMANDS:
+        _schedule_state_heartbeat()
