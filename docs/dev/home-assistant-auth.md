@@ -162,7 +162,21 @@ ssh alix@192.168.50.8 'curl -s localhost:9222/json | grep -E "\"(url|title)\""'
 Also check `ha.squid-ink.us` still loads from outside: `use_x_forwarded_for`
 now only trusts the node IPs, so if traefik's traffic reached HA from some
 other address HA would see the proxy's IP as the client and `ip_ban` could
-start counting failed logins against it.
+start counting failed logins against it. A LAN client going out through the
+public hostname is hairpin-NATed by the router and shows up in HA's logs as
+`192.168.50.1`; that is normal and predates this change.
+
+### Results, 2026-08-28
+
+- Mac (`192.168.50.150`): `/auth/providers` lists only `homeassistant`.
+- Living Room Tv (`192.168.50.8`): lists `trusted_networks`; `login_flow`
+  returns `create_entry` with an auth code.
+- `https://ha.squid-ink.us/auth/providers` returns 200 through traefik.
+- `POST /kiosks/<living-room-tv>/navigate` to `http://192.168.50.10:8123/lovelace/0`:
+  CDP on the Pi reports `Overview – Home Assistant` at `/home/overview`, and
+  `.storage/auth` holds a new refresh token for the Kiosk user with
+  `last_used_ip: 192.168.50.8`.
+- Pending http config promoted to stable.
 
 ## Things to know
 
