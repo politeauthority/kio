@@ -12,6 +12,9 @@ import { API_URL } from './config'
 // ---------------------------------------------------------------------------
 
 const DEV_TOKEN_KEY = 'kio_dev_token'
+// Which mechanism signed the user in last. Lets /login skip straight to Authentik
+// on a fresh tab instead of showing the button again.
+const LAST_LOGIN_KEY = 'kio_last_login'
 
 function _injected(name, placeholder) {
   const v = window[name]
@@ -87,7 +90,13 @@ function getManager() {
       // Authentik does not expose an OP check-session iframe; leave it off to
       // avoid console noise and spurious sign-outs.
       monitorSession: false,
-      userStore: new WebStorageStateStore({ store: window.sessionStorage }),
+      // localStorage, not sessionStorage: a session-scoped store is per tab and
+      // gone when the tab closes, so every new tab or browser start had to go
+      // back through Authentik — and back through its login form whenever the
+      // Authentik cookie had lapsed too. With the user (and its refresh token)
+      // in localStorage every tab shares one session, and getUser() renews it in
+      // place for as long as the refresh token lasts.
+      userStore: new WebStorageStateStore({ store: window.localStorage }),
     })
   }
   return _manager
@@ -102,6 +111,12 @@ export async function getUser() {
     try {
       user = await mgr.signinSilent()
     } catch {
+      // The store is shared across tabs, so another tab may have renewed (and
+      // rotated the refresh token) while this one was trying. Re-read before
+      // deciding the session is dead — dropping the user here would sign every
+      // tab out.
+      const fresh = await mgr.getUser()
+      if (fresh && !fresh.expired) return fresh
       await mgr.removeUser()
       user = null
     }
@@ -111,7 +126,25 @@ export async function getUser() {
 
 export async function handleCallback() {
   const user = await getManager().signinRedirectCallback()
+  rememberLogin('oidc')
   return user?.state?.returnTo || '/'
+}
+
+function rememberLogin(method) {
+  try {
+    localStorage.setItem(LAST_LOGIN_KEY, method)
+  } catch {
+    /* storage unavailable — the login page just shows the button */
+  }
+}
+
+/** True when the last successful sign-in on this browser went through Authentik. */
+export function lastLoginWasOidc() {
+  try {
+    return localStorage.getItem(LAST_LOGIN_KEY) === 'oidc'
+  } catch {
+    return false
+  }
 }
 
 /** Kick off the redirect to Authentik. `returnTo` is restored after the callback. */
@@ -140,6 +173,7 @@ export async function devLogin(username, password) {
   if (!res.ok) throw new Error('Invalid credentials')
   const { access_token } = await res.json()
   sessionStorage.setItem(DEV_TOKEN_KEY, access_token)
+  rememberLogin('dev')
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +229,12 @@ export async function clearSession() {
 export async function logout() {
   const wasDev = Boolean(getDevToken())
   await clearSession()
+  // An explicit sign-out means the next visit should get the choice again.
+  try {
+    localStorage.removeItem(LAST_LOGIN_KEY)
+  } catch {
+    /* ignore */
+  }
   if (!wasDev && isOidcEnabled()) {
     try {
       // Ends the Authentik session too; lands on /login afterwards.

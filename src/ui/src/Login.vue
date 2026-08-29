@@ -40,7 +40,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { authConfig, devLogin as devLoginRequest, isAuthenticated, oidcLogin } from './auth'
+import { authConfig, devLogin as devLoginRequest, isAuthenticated, lastLoginWasOidc, oidcLogin } from './auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,9 +66,10 @@ onMounted(async () => {
     router.replace(returnTo.value)
     return
   }
-  // Authentik is the only option: skip the intermediate page entirely,
-  // unless we've just bounced back here from a failed callback.
-  if (oidc && !devLogin && !callbackError.value) ssoLogin()
+  // Skip the intermediate page when Authentik is the only option, or when it's
+  // what this browser signed in with last time — a fresh tab shouldn't need the
+  // button clicked again. Not after a failed callback, which would just loop.
+  if (oidc && !callbackError.value && (!devLogin || lastLoginWasOidc())) ssoLogin()
 })
 
 async function ssoLogin() {
