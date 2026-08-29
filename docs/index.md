@@ -26,6 +26,7 @@
 | [Staging](dev/staging.md) | Deploying branches to the `kio-stg` namespace for testing |
 | [Testing](dev/testing.md) | Unit tests and e2e regression tests against a live environment |
 | [Home Assistant](dev/home-assistant.md) | The kio HA integration and how to develop against it |
+| [Home Assistant kiosk login](dev/home-assistant-auth.md) | Passwordless HA dashboards on kiosks via trusted_networks, and the trusted_proxies trap |
 
 ## Research
 
