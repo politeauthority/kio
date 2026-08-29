@@ -74,6 +74,7 @@ What it configures:
 | Signing key | `authentik Self-signed Certificate` (override with `AUTHENTIK_SIGNING_KEY`) — RS256 |
 | Grant types | `authorization_code`, `refresh_token` (Authentik's per-provider allow-list; empty = every login fails with "Invalid grant_type for provider") |
 | Access token validity | 24h |
+| Refresh token validity | 30 days (override with `AUTHENTIK_REFRESH_TOKEN_VALIDITY`) |
 
 `offline_access` is what lets the UI get a refresh token and renew the session in
 the background; without it users get bounced through Authentik whenever the
@@ -188,9 +189,18 @@ whatever mechanisms are enabled and restores `returnTo` afterwards (only
 in-app paths are honoured).
 
 OIDC uses `oidc-client-ts` (Authorization Code + PKCE). Tokens live in
-`sessionStorage`; `automaticSilentRenew` uses the refresh token, and a token
-found expired on page load is renewed inline before the first API call. A `401`
-from the API clears local credentials and returns to `/login`.
+`localStorage`, shared by every tab and kept across browser restarts;
+`automaticSilentRenew` uses the refresh token, and a token found expired on page
+load is renewed inline before the first API call. So a browser that has signed in
+once stays signed in for the refresh token's lifetime (30 days by default) without
+seeing Authentik again, whatever Authentik's own session length is. If the silent
+renew fails, the store is re-read first — another tab may have renewed and
+rotated the refresh token in the meantime — before the session is dropped. A
+`401` from the API clears local credentials and returns to `/login`.
+
+The login page remembers which mechanism was used last (`kio_last_login`): when
+it was Authentik, a fresh tab goes straight there instead of showing the button
+again. Sign out clears that, so the next visit gets the choice back.
 
 `OIDC_AUTHORITY` / `OIDC_CLIENT_ID` on the UI container (and `VITE_OIDC_*` for
 `npm run dev`) are still honoured as a fallback when `/auth/config` is

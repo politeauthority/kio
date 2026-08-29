@@ -52,6 +52,8 @@ REDIRECT_URIS = [
 # offline_access lets the UI obtain a refresh token so sessions renew silently
 # instead of redirecting through Authentik every time the access token expires.
 SCOPES = ["openid", "profile", "email", "offline_access"]
+ACCESS_TOKEN_VALIDITY = "hours=24"
+REFRESH_TOKEN_VALIDITY = os.environ.get("AUTHENTIK_REFRESH_TOKEN_VALIDITY", "days=30")
 # Authentik (2025.x+) keeps an allow-list of grant types per provider; a provider
 # created without one allows nothing and every authorize request fails with
 # "Invalid grant_type for provider". Code flow for login, refresh_token so
@@ -146,8 +148,13 @@ def find_or_create_provider(token):
     signing_key = _find_signing_key(token)
     p = _existing_provider(token)
     if p:
-        print(f"  Provider already exists (pk={p['pk']}, {p.get('name')!r}) — syncing redirect URIs, scopes, grant types and signing key")
-        patch = {"redirect_uris": _redirect_uris(), "grant_types": GRANT_TYPES}
+        print(f"  Provider already exists (pk={p['pk']}, {p.get('name')!r}) — syncing redirect URIs, scopes, grant types, token validity and signing key")
+        patch = {
+            "redirect_uris": _redirect_uris(),
+            "grant_types": GRANT_TYPES,
+            "access_token_validity": ACCESS_TOKEN_VALIDITY,
+            "refresh_token_validity": REFRESH_TOKEN_VALIDITY,
+        }
         scope_pks = _find_scope_pks(token)
         if scope_pks is not None:
             patch["property_mappings"] = scope_pks
@@ -162,7 +169,11 @@ def find_or_create_provider(token):
         "grant_types": GRANT_TYPES,
         "redirect_uris": _redirect_uris(),
         "authorization_flow": _get_default_auth_flow(token),
-        "access_token_validity": "hours=24",
+        "access_token_validity": ACCESS_TOKEN_VALIDITY,
+        # How long a signed-in browser stays signed in without seeing Authentik
+        # again: the UI renews its access token with the refresh token until this
+        # runs out. Authentik's own default is 30 days; pinned so it's explicit.
+        "refresh_token_validity": REFRESH_TOKEN_VALIDITY,
     }
     if signing_key is not None:
         body["signing_key"] = signing_key
