@@ -368,6 +368,9 @@ def _cmd_navigate_tab(cmd: dict, command_id: str | None) -> bool:
             if tab:
                 _cdp_call(tab, "Page.navigate", {"url": url})
                 logger.info("Navigated tab %s to %s", tab_id, url)
+                # If that page was already open in another tab, drop the extra.
+                if runtime.agent:
+                    runtime.agent._close_duplicate_tabs()
             else:
                 logger.warning("navigate_tab: tab %s not found", tab_id)
                 _report_command("navigate_tab", False, f"Tab {tab_id} not found", command_id=command_id)

@@ -244,6 +244,15 @@ class KioAgent:
         restored, False when there was nothing worth restoring (idle/default page).
         """
         restorable = [t for t in tabs if t.get("url") and is_safe_url(t["url"]) and not t["url"].startswith("about:")]
+        # The saved snapshot can itself hold duplicates (e.g. taken before a
+        # dedupe sweep ran). Restore one tab per page, preferring the entry that
+        # was active so focus lands on the right one below.
+        by_page: dict[str, dict] = {}
+        for t in restorable:
+            key = _normalize_url(t["url"])
+            if key not in by_page or (t.get("active") and not by_page[key].get("active")):
+                by_page[key] = t
+        restorable = list(by_page.values())
         if not restorable:
             return False
 
@@ -254,13 +263,18 @@ class KioAgent:
         active_url = next((t["url"] for t in restorable if t.get("active")), restorable[0]["url"])
 
         # After a daemon-only restart Chromium is still running with its tabs —
-        # reuse them instead of opening duplicates. Saved URLs came from CDP, so
-        # they match the live tab URLs exactly for any tab that survived.
-        ids_by_url: dict[str, str] = {}
+        # reuse them instead of opening duplicates. Match on the normalized URL so
+        # a page that redirected to a trailing slash or gained a fragment since the
+        # snapshot still counts as already open.
+        ids_by_page: dict[str, str] = {}
         for t in _get_tabs():
             if t.get("url"):
-                ids_by_url.setdefault(t["url"], t["id"])
-        ids_by_url = {t["url"]: ids_by_url[t["url"]] for t in restorable if t["url"] in ids_by_url}
+                ids_by_page.setdefault(_normalize_url(t["url"]), t["id"])
+        ids_by_url = {
+            t["url"]: ids_by_page[_normalize_url(t["url"])]
+            for t in restorable
+            if _normalize_url(t["url"]) in ids_by_page
+        }
 
         missing = [t for t in restorable if t["url"] not in ids_by_url]
         logger.info(
@@ -609,11 +623,14 @@ class KioAgent:
 
         For each URL open more than once, keep the active tab (else the oldest)
         and close the rest, logging each closure to the event log. Skipped while a
-        playlist or tab cycle is running — those deliberately drive the tab set and
-        may preload repeated content, so we must not pull tabs out from under them.
-        Never closes the last remaining tab (one per URL always survives).
+        playlist is running — it preloads its own tab set and may deliberately repeat
+        a URL, so we must not pull tabs out from under it. A tab cycle is fine: it
+        re-reads the live tab list on every rotation, and a kiosk typically cycles
+        for days, so suppressing cleanup for its whole run would let duplicates
+        accumulate indefinitely. Never closes the last remaining tab (one per URL
+        always survives).
         """
-        if self._player is not None or self._cycler is not None:
+        if self._player is not None:
             return 0
         tabs = [t for t in _get_tabs() if (t.get("url") or "").startswith(("http://", "https://"))]
         if len(tabs) <= 1:
