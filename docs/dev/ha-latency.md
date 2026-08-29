@@ -56,7 +56,7 @@ max ~60 s; navigate similar.
 Ordered by expected payoff per line of code. Each is its own PR so it can be
 measured alone and reverted alone.
 
-### 1. Agent pushes a heartbeat after state-changing commands — **in progress**
+### 1. Agent pushes a heartbeat after state-changing commands — **PR #69**
 
 Hypothesis: most of the delay is the agent sitting on new state for up to
 30 s. If `handle_command` posts a heartbeat once a handler that changes
@@ -132,7 +132,7 @@ Result: _pending_
 | # | Strategy | PR | Status | pause/play median | navigate median |
 |---|---|---|---|---|---|
 | — | baseline v0.8.2 | — | measured | ~40 s | ~40 s |
-| 1 | heartbeat after commands | #68 | PR open — measure once nodes run it | | |
+| 1 | heartbeat after commands | #69 | PR open — measure once nodes run it | | |
 | 2 | delayed post-write refresh | — | | | |
 | 3 | SSE push in HA | — | | | |
 | 4 | shorter heartbeat | — | | | |
