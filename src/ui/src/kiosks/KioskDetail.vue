@@ -495,6 +495,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { normalizeUrl } from '../utils/url'
 import { RouterLink, useRoute } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { useToastStore } from '../stores/toast'
@@ -1222,9 +1223,11 @@ async function saveTabOrder(urls) {
 }
 
 function savedUrlFor(tabUrl) {
+  // Same rule as the API's current_url_name (see utils/url.js), so a tab shows
+  // a saved URL's name exactly when Home Assistant would.
   if (!tabUrl) return null
-  const norm = normUrl(tabUrl)
-  return savedUrls.value.find(u => normUrl(u.url) === norm) ?? null
+  const norm = normalizeUrl(tabUrl)
+  return savedUrls.value.find(u => normalizeUrl(u.url) === norm) ?? null
 }
 
 function normUrl(u) {

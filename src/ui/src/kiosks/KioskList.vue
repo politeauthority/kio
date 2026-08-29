@@ -46,8 +46,9 @@
                 target="_blank"
                 rel="noopener"
                 class="text-sm text-muted"
+                :title="kiosk.current_url"
                 @click.stop
-              >{{ kiosk.current_url }}</a>
+              >{{ kiosk.current_url_name || kiosk.current_url }}</a>
               <span v-else class="text-muted">—</span>
             </td>
             <td class="text-muted text-sm">{{ formatLastSeen(kiosk.last_seen) }}</td>
