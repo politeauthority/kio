@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.7](https://github.com/politeauthority/kio/compare/v0.7.6...v0.7.7) (2026-08-29)
+
+
+### Bug Fixes
+
+* **pi-agent:** keep node features across self-update and detect ([#53](https://github.com/politeauthority/kio/issues/53)) ([4b20b65](https://github.com/politeauthority/kio/commit/4b20b650e300855138d55e30b00cb9230c62c377))
+
 ## [0.7.6](https://github.com/politeauthority/kio/compare/v0.7.5...v0.7.6) (2026-08-29)
 
 
