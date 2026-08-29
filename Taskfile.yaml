@@ -661,7 +661,7 @@ tasks:
         # A refresh makes ArgoCD re-read private-ops right away instead of waiting out its
         # poll interval + revision cache (~3-6 min); the app is auto-sync, so it then rolls.
         kubectl -n argocd annotate application kio argocd.argoproj.io/refresh=normal --overwrite >/dev/null
-        echo "Refresh requested; waiting for ArgoCD to sync${REV:+ revision $REV}..."
+        echo "Refresh requested; waiting for ArgoCD to sync{{if .REV}} revision {{.REV}}{{end}}..."
         deadline=$(( $(date +%s) + {{.TIMEOUT}} ))
         while :; do
           st=$(kubectl -n argocd get application kio -o jsonpath='{.status.sync.status}/{.status.health.status}/{.status.operationState.phase}/{.status.sync.revision}')
