@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/politeauthority/kio/compare/v0.8.1...v0.8.2) (2026-08-29)
+
+
+### Bug Fixes
+
+* **ui:** match saved URLs the way the API does, show their names in the list ([#63](https://github.com/politeauthority/kio/issues/63)) ([2cc6b31](https://github.com/politeauthority/kio/commit/2cc6b31cfa5aff4b495feb51a08be0d1e1f373a3))
+
 ## [0.8.1](https://github.com/politeauthority/kio/compare/v0.8.0...v0.8.1) (2026-08-29)
 
 
