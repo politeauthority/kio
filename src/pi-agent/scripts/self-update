@@ -33,7 +33,22 @@ if [[ -z "${KIO_UPDATE_DETACHED:-}" ]]; then
     /opt/kio-agent/self-update
 fi
 
-exec >>/var/log/kio-agent-update.log 2>&1
+# The update log is the one file on a node that grows without bound (every update
+# appends). Trim it to the node_update_log_max_kb setting (Settings → Data
+# retention, cached by the agent in /etc/kio/settings.json) before appending —
+# this script runs as root, the agent does not own the file.
+LOG=/var/log/kio-agent-update.log
+MAX_KB="$(python3 -c 'import json,sys
+try:
+    print(int(json.load(open("/etc/kio/settings.json")).get("node_update_log_max_kb", 256)))
+except Exception:
+    print(256)' 2>/dev/null || echo 256)"
+[[ "$MAX_KB" =~ ^[0-9]+$ ]] || MAX_KB=256
+if [[ -f "$LOG" ]] && (( $(stat -c %s "$LOG") > MAX_KB * 1024 )); then
+  tail -c $((MAX_KB * 1024)) "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+fi
+
+exec >>"$LOG" 2>&1
 echo "=== $(date -Is) kio-agent self-update (ref=$BRANCH) ==="
 # KIO_ALLOW_HTTP=1: this runs with no tty, so pre-acknowledge an http:// API URL
 # (already accepted at install) — otherwise setup.sh's HTTP-confirmation prompt

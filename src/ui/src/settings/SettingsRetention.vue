@@ -5,7 +5,7 @@
         <RouterLink to="/settings" class="text-muted text-sm" style="display: inline-flex; align-items: center; gap: 4px; margin-bottom: 0.4rem">
           ← Settings
         </RouterLink>
-        <h1 class="page-title">Agents</h1>
+        <h1 class="page-title">Data retention</h1>
       </div>
       <button class="btn btn-primary" style="min-width: 64px" :disabled="saving || loading" @click="save">
         {{ saving ? 'Saving…' : 'Save' }}
@@ -14,12 +14,13 @@
 
     <div class="card" style="max-width: 560px">
       <p class="text-xs text-muted" style="margin-bottom: 1.25rem">
-        System-wide settings affecting node health monitoring. Log retention lives under Data retention.
+        How long kio keeps the data that accumulates as nodes run. Server-side purges run hourly;
+        the node setting is pushed to every kiosk and applied on its next settings check-in.
       </p>
       <div v-if="loading" class="text-muted text-sm">Loading…</div>
       <div v-else style="display: flex; flex-direction: column; gap: var(--space-md)">
         <div
-          v-for="field in agentFields"
+          v-for="field in fields"
           :key="field.key"
           style="display: flex; align-items: center; justify-content: space-between; gap: 1rem"
         >
@@ -56,8 +57,25 @@ const loading = ref(true)
 const saving = ref(false)
 const settings = ref({})
 
-const agentFields = [
-  { key: 'node_offline_threshold_seconds', label: 'Node health timeout', description: 'A node with no heartbeat for this long is marked offline.', unit: 'sec', min: 10, max: 3600 },
+const fields = [
+  {
+    key: 'event_log_purge_days',
+    label: 'Event log',
+    description: 'Dashboard commands and agent acks (the Event Log pages) older than this are deleted.',
+    unit: 'days', min: 1, max: 365,
+  },
+  {
+    key: 'hardware_log_purge_days',
+    label: 'Hardware detection logs',
+    description: 'Capability/probe snapshots older than this are deleted; each node always keeps its newest one.',
+    unit: 'days', min: 1, max: 365,
+  },
+  {
+    key: 'node_update_log_max_kb',
+    label: 'Node update log cap',
+    description: 'On each kiosk, /var/log/kio-agent-update.log is trimmed to this size before an agent update runs.',
+    unit: 'KB', min: 16, max: 10240,
+  },
 ]
 
 async function load() {
@@ -74,12 +92,12 @@ async function save() {
   saving.value = true
   try {
     const payload = {}
-    for (const f of agentFields) payload[f.key] = Number(settings.value[f.key])
+    for (const f of fields) payload[f.key] = Number(settings.value[f.key])
     settings.value = await apiFetch('/settings/agent', {
       method: 'PUT',
       body: JSON.stringify(payload),
     })
-    toast.add('Settings saved', 'success')
+    toast.add('Retention settings saved', 'success')
   } catch (e) {
     toast.add(e.status === 422 ? 'Invalid value — check the ranges' : 'Failed to save settings', 'error')
   } finally {

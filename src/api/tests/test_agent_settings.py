@@ -42,6 +42,16 @@ def test_effective_settings_ignores_non_overridable():
     assert merged["event_log_purge_days"] == ss.AGENT_SETTING_DEFAULTS["event_log_purge_days"]
 
 
+def test_retention_keys_are_server_side_or_node_affecting_but_never_overridable():
+    assert "hardware_log_purge_days" not in ss.OVERRIDABLE_KEYS
+    assert "hardware_log_purge_days" not in ss.NODE_AFFECTING_KEYS
+    assert "node_update_log_max_kb" not in ss.OVERRIDABLE_KEYS
+    assert "node_update_log_max_kb" in ss.NODE_AFFECTING_KEYS
+    assert ss.coerce_setting("hardware_log_purge_days", 30) == 30
+    with pytest.raises(ValueError):
+        ss.coerce_setting("node_update_log_max_kb", 1)  # below the 16 KB floor
+
+
 def test_effective_settings_ignores_malformed_override():
     merged = ss.effective_settings({**ss.AGENT_SETTING_DEFAULTS}, {"heartbeat_interval_seconds": "bad"})
     assert merged["heartbeat_interval_seconds"] == ss.AGENT_SETTING_DEFAULTS["heartbeat_interval_seconds"]

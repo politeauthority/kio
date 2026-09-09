@@ -193,3 +193,17 @@ Tasks exist per node (`kio-1`, `kio-2`, `kio-3`); `<node>` below stands in for a
 | `task <node>:release-prd` | Deploy and switch to prod |
 | `task <node>:logs` | Stream agent logs from the node |
 | `task mqtt:monitor` | Watch all `kio/#` MQTT traffic |
+
+## Data retention
+
+What kio keeps, and the knob that bounds it (Settings → Data retention; `settings_service`
+`AGENT_SETTING_DEFAULTS`, purged hourly by `_offline_sweeper` via `services/retention_service.py`):
+
+| Data | Setting | Default | Notes |
+|---|---|---|---|
+| `command_logs` (Event Log pages) | `event_log_purge_days` | 7 | server-side |
+| `hardware_detect_logs` (capability/probe snapshots) | `hardware_log_purge_days` | 30 | server-side; each kiosk's newest row is always kept — boot-time feature restore reads it |
+| `/var/log/kio-agent-update.log` on each node | `node_update_log_max_kb` | 256 | node-affecting: `scripts/self-update` trims the file to this size before appending (it runs as root; the agent only reads the cached value from `/etc/kio/settings.json`) |
+
+Everything else the agent writes on a node is a fixed-size file rewritten in place, and its
+stdout goes to journald, which has its own limits.

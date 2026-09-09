@@ -65,7 +65,12 @@ const systemItems = computed(() => {
     {
       to: '/settings/agents',
       title: 'Agents',
-      description: 'System-wide agent health and retention settings.',
+      description: 'System-wide agent health monitoring.',
+    },
+    {
+      to: '/settings/retention',
+      title: 'Data retention',
+      description: 'How long event logs, hardware logs and node update logs are kept.',
     },
     {
       to: '/settings/api-keys',
