@@ -26,7 +26,7 @@ spec:
         - name: harbor-registry
       containers:
         - name: migrate
-          image: harbor.squid-ink.us/politeauthority/kio-api:latest
+          image: harbor.alix.lol/politeauthority/kio-api:latest
           imagePullPolicy: Always
           command: ["alembic", "upgrade", "head"]
           workingDir: /app

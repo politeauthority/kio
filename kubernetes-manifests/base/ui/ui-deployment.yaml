@@ -25,7 +25,7 @@ spec:
         - name: harbor-registry
       containers:
         - name: kio-ui
-          image: harbor.squid-ink.us/politeauthority/kio-ui:latest
+          image: harbor.alix.lol/politeauthority/kio-ui:latest
           imagePullPolicy: Always
           # Image is nginxinc/nginx-unprivileged: master + workers run as uid 101
           # and listen on :8080. readOnlyRootFilesystem is intentionally NOT set —

@@ -21,7 +21,7 @@ jobs:
     if: contains(github.event.pull_request.labels.*.name, 'build-check')
     runs-on: kio
     container:
-      image: harbor.squid-ink.us/politeauthority/polite-cicd:${{ vars.CICD_VERSION }}
+      image: harbor.alix.lol/politeauthority/polite-cicd:${{ vars.CICD_VERSION }}
       options: '--dns 8.8.8.8'
       credentials:
         username: ${{ vars.HARBOR_USER }}
@@ -40,7 +40,7 @@ jobs:
       - name: Log in to Harbor (to pull base images; nothing is pushed)
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
-          registry: harbor.squid-ink.us
+          registry: harbor.alix.lol
           username: ${{ vars.HARBOR_USER }}
           password: ${{ secrets.HARBOR_PASSWORD }}
       - name: Docker build (no push)
