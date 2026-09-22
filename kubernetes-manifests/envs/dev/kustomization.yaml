@@ -2,9 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kio-dev
 images:
-  - name: harbor.squid-ink.us/politeauthority/kio-api
+  - name: harbor.alix.lol/politeauthority/kio-api
     newTag: dev-latest
-  - name: harbor.squid-ink.us/politeauthority/kio-ui
+  - name: harbor.alix.lol/politeauthority/kio-ui
     newTag: dev-latest
 resources:
   - ../../base

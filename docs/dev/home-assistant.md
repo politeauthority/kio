@@ -230,7 +230,7 @@ If `_async_update_data` raises `UpdateFailed`, HA marks all entities unavailable
 
 ## Debugging in the HA UI
 
-Navigate to these pages to verify integration state. All paths are relative to `https://ha.squid-ink.us`.
+Navigate to these pages to verify integration state. All paths are relative to `https://ha.alix.lol`.
 
 | What you want to see | Navigation path |
 |---|---|

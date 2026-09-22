@@ -706,6 +706,9 @@ tasks:
         s = path.read_text()
         s, n_ref = re.subn(r'(kubernetes-manifests/base\?ref=)\S+', rf'\g<1>v{version}', s)
         s, n_tag = re.subn(r'^(\s*newTag:\s*)"?[^"\n]+"?\s*$', rf'\g<1>"{version}"', s, flags=re.M)
+        # The base moved from harbor.squid-ink.us to harbor.alix.lol; images: must
+        # match the base's name or the tag overrides silently stop applying.
+        s = re.sub(r'^(\s*- name:\s*)harbor\.squid-ink\.us/', r'\g<1>harbor.alix.lol/', s, flags=re.M)
         assert n_ref == 1, f"expected 1 base ref, found {n_ref}"
         assert n_tag == 2, f"expected 2 newTag entries (api + ui), found {n_tag}"
         path.write_text(s)

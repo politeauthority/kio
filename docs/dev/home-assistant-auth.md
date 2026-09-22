@@ -71,7 +71,7 @@ The stored http config:
 ]
 ```
 
-Those are the four k8s node IPs plus the pod CIDR. `ha.squid-ink.us` is served
+Those are the four k8s node IPs plus the pod CIDR. `ha.alix.lol` is served
 by the `traefik` IngressRoute in `private-ops/home-assistant/base/network.yaml`;
 traefik pods reach `192.168.50.10:8123` directly, so HA sees a node IP (SNAT) or
 a pod IP as the connecting address.
@@ -159,7 +159,7 @@ Chromium landed on the dashboard and not the login page:
 ssh alix@192.168.50.8 'curl -s localhost:9222/json | grep -E "\"(url|title)\""'
 ```
 
-Also check `ha.squid-ink.us` still loads from outside: `use_x_forwarded_for`
+Also check `ha.alix.lol` still loads from outside: `use_x_forwarded_for`
 now only trusts the node IPs, so if traefik's traffic reached HA from some
 other address HA would see the proxy's IP as the client and `ip_ban` could
 start counting failed logins against it. A LAN client going out through the
@@ -171,7 +171,7 @@ public hostname is hairpin-NATed by the router and shows up in HA's logs as
 - Mac (`192.168.50.150`): `/auth/providers` lists only `homeassistant`.
 - Living Room Tv (`192.168.50.8`): lists `trusted_networks`; `login_flow`
   returns `create_entry` with an auth code.
-- `https://ha.squid-ink.us/auth/providers` returns 200 through traefik.
+- `https://ha.alix.lol/auth/providers` returns 200 through traefik.
 - `POST /kiosks/<living-room-tv>/navigate` to `http://192.168.50.10:8123/lovelace/0`:
   CDP on the Pi reports `Overview – Home Assistant` at `/home/overview`, and
   `.storage/auth` holds a new refresh token for the Kiosk user with
@@ -185,7 +185,7 @@ public hostname is hairpin-NATed by the router and shows up in HA's logs as
   reservation or update both `trusted_networks` and `trusted_users`.
 - `trusted_users` values are HA user IDs, not usernames
   (`jq '.data.users[] | {id,name}' /config/.storage/auth`).
-- Use the **internal** URL on kiosks. Through `ha.squid-ink.us` HA sees the
+- Use the **internal** URL on kiosks. Through `ha.alix.lol` HA sees the
   kiosk's IP only via `X-Forwarded-For`, which works, but adds a public
   round-trip for a LAN device.
 - For a clean full-screen dashboard install the HACS `kiosk-mode` plugin and

@@ -31,7 +31,7 @@ spec:
         - name: harbor-registry
       containers:
         - name: kio-api
-          image: harbor.squid-ink.us/politeauthority/kio-api:latest
+          image: harbor.alix.lol/politeauthority/kio-api:latest
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
