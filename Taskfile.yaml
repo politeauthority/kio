@@ -28,6 +28,8 @@ tasks:
   apply-dev:
     desc: Apply kio-dev k8s manifests
     cmds:
+      # Jobs are immutable and the migrate Job has no TTL: drop the previous one so it re-runs.
+      - kubectl -n kio-dev delete job kio-migrate --ignore-not-found
       - kubectl apply -k kubernetes-manifests/envs/dev/
 
   # There is deliberately no apply-prd: production is owned by ArgoCD from the
@@ -37,6 +39,8 @@ tasks:
   apply-stg:
     desc: Apply kio-stg k8s manifests (incl. the namespace-scoped SealedSecrets)
     cmds:
+      # Jobs are immutable and the migrate Job has no TTL: drop the previous one so it re-runs.
+      - kubectl -n kio-stg delete job kio-migrate --ignore-not-found
       - kubectl apply -k kubernetes-manifests/envs/stg/
 
   stg-deploy:
