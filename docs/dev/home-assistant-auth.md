@@ -35,7 +35,7 @@ Two separate places hold the relevant config:
 
 | Setting | Where it lives | How to change it |
 |---|---|---|
-| `homeassistant.auth_providers` | `/config/configuration.yaml` (source of truth: `private-ops/home-assistant/ha-config/configuration.yaml`) | Edit in private-ops, push, restart Core |
+| `homeassistant.auth_providers` | `/config/configuration.yaml` (source of truth: `private-ops/apps/home/home-assistant/ha-config/configuration.yaml`) | Edit in private-ops, push, restart Core |
 | `http` (`trusted_proxies`, `use_x_forwarded_for`, ...) | `/config/.storage/http` | Websocket API `http/config/configure`, then `http/config/promote` |
 
 HA 2026.8 migrated the `http:` YAML block into `.storage/http` (the
@@ -72,7 +72,7 @@ The stored http config:
 ```
 
 Those are the four k8s node IPs plus the pod CIDR. `ha.squid-ink.us` is served
-by the `traefik` IngressRoute in `private-ops/home-assistant/base/network.yaml`;
+by the `traefik` IngressRoute in `private-ops/apps/home/home-assistant/base/network.yaml`;
 traefik pods reach `192.168.50.10:8123` directly, so HA sees a node IP (SNAT) or
 a pod IP as the connecting address.
 
