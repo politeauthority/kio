@@ -14,6 +14,14 @@ on:
   pull_request:
     paths: ["src/ha-integration/**"]
 
+concurrency:
+  # PRs: one run per branch, newest wins. main: one run at a time, newest wins —
+  # a superseded main build is wasted work. Release commits ("chore(main):
+  # release …") get a group of their own so they never cancel a main build.
+  # Non-release pushes key on the ref so `main` and `cicd` never cancel each other.
+  group: "ha-integration-${{ github.event_name == 'pull_request' && github.ref || (startsWith(github.event.head_commit.message, 'chore(main): release') && github.run_id || github.ref) }}"
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

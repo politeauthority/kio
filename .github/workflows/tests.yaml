@@ -28,7 +28,10 @@ on:
     paths: *test-paths
 
 concurrency:
-  group: tests-${{ github.event.pull_request.number || github.ref }}
+  # PRs: one run per branch, newest wins. main: one run at a time, newest wins —
+  # a superseded main build is wasted work. Release commits ("chore(main):
+  # release …") get a group of their own so they never cancel a main build.
+  group: "tests-${{ github.event_name == 'pull_request' && github.ref || (startsWith(github.event.head_commit.message, 'chore(main): release') && github.run_id || 'main') }}"
   cancel-in-progress: true
 
 permissions:
