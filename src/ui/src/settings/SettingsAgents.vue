@@ -14,7 +14,7 @@
 
     <div class="card" style="max-width: 560px">
       <p class="text-xs text-muted" style="margin-bottom: 1.25rem">
-        System-wide settings affecting node health monitoring and log retention.
+        System-wide settings affecting node health monitoring. Log retention lives under Data retention.
       </p>
       <div v-if="loading" class="text-muted text-sm">Loading…</div>
       <div v-else style="display: flex; flex-direction: column; gap: var(--space-md)">
@@ -58,7 +58,6 @@ const settings = ref({})
 
 const agentFields = [
   { key: 'node_offline_threshold_seconds', label: 'Node health timeout', description: 'A node with no heartbeat for this long is marked offline.', unit: 'sec', min: 10, max: 3600 },
-  { key: 'event_log_purge_days', label: 'Event log retention', description: 'Event-log entries older than this are purged.', unit: 'days', min: 1, max: 365 },
 ]
 
 async function load() {

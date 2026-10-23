@@ -33,6 +33,8 @@ _SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 # attempt. A marker written before launch lets the *new* agent (post-restart)
 # log the success/failure outcome on boot. See reporting of the update result.
 UPDATE_STATE_FILE = "/opt/kio-agent/update-state.json"
+# Trimmed by scripts/self-update to the node_update_log_max_kb setting before
+# each update appends (Settings → Data retention).
 UPDATE_LOG_FILE = "/var/log/kio-agent-update.log"
 
 # Only these URL schemes may be loaded in the kiosk browser. Blocks

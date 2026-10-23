@@ -18,7 +18,12 @@ AGENT_SETTING_DEFAULTS: dict[str, int] = {
     "metadata_interval_seconds": 3600,
     "settings_checkin_seconds": 300,
     "node_offline_threshold_seconds": 90,
+    # Data retention (Settings → Data retention). event_log_purge_days and
+    # hardware_log_purge_days are server-side purges; node_update_log_max_kb is
+    # applied on the nodes (the self-update log is trimmed to this size).
     "event_log_purge_days": 7,
+    "hardware_log_purge_days": 30,
+    "node_update_log_max_kb": 256,
     # Display brightness (DDC/CI VCP 10). Shipped behind a gate: brightness_enabled
     # defaults to 0 (off) so the feature dark-launches and is rolled out per node or
     # fleet-wide by flipping this. brightness_default is the luminance applied when
@@ -36,6 +41,8 @@ SETTING_BOUNDS: dict[str, tuple[int, int]] = {
     "settings_checkin_seconds": (30, 86400),
     "node_offline_threshold_seconds": (10, 3600),
     "event_log_purge_days": (1, 365),
+    "hardware_log_purge_days": (1, 365),
+    "node_update_log_max_kb": (16, 10240),
     "brightness_enabled": (0, 1),
     "brightness_default": (0, 100),
 }
@@ -50,8 +57,8 @@ OVERRIDABLE_KEYS: set[str] = {
 }
 
 # Settings whose change requires nodes to pull and reload. Excludes purely
-# server-side settings (event_log_purge_days) so changing log retention doesn't
-# bounce the whole fleet.
+# server-side settings (event_log_purge_days, hardware_log_purge_days) so changing
+# log retention doesn't bounce the whole fleet.
 NODE_AFFECTING_KEYS: set[str] = {
     "heartbeat_interval_seconds",
     "heartbeat_jitter_seconds",
@@ -59,6 +66,7 @@ NODE_AFFECTING_KEYS: set[str] = {
     "settings_checkin_seconds",
     "brightness_enabled",
     "brightness_default",
+    "node_update_log_max_kb",
 }
 
 # NodeMeta key under which per-node overrides are stored.
