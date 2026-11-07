@@ -24,7 +24,7 @@ run-name: "Release Please — ${{ github.ref_name }}"
 # deploy need uv/docker/task from the polite-cicd container.
 #
 # Repo settings (human-only, see docs/dev/releasing.md):
-#   vars:    HARBOR_USER (robot$ci), CICD_VERSION (polite-cicd image tag)
+#   vars:    HARBOR_USER (robot$real-robot-yo), CICD_VERSION (polite-cicd image tag)
 #   secrets: HARBOR_PASSWORD, PAT (merge release PRs, create tags/releases),
 #            PRIVATE_OPS_TOKEN (contents:write on politeauthority/private-ops),
 #            ARGOCD_KUBECONFIG (base64 kubeconfig able to get/patch the `kio` Application)
