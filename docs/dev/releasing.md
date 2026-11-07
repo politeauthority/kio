@@ -138,9 +138,9 @@ also run `task lint` and a no-push build of both images (`pr-build-check.yaml`).
 
 | Name | Kind | Value |
 |---|---|---|
-| `HARBOR_USER` | variable | `robot$ci` |
+| `HARBOR_USER` | variable | `robot$real-robot-yo` |
 | `CICD_VERSION` | variable | current `polite-cicd` image tag (copy from bookmarx/quigley-api) |
-| `HARBOR_PASSWORD` | secret | shared `robot$ci` token (also add to *Dependabot* secrets) |
+| `HARBOR_PASSWORD` | secret | shared `robot$real-robot-yo` token (also add to *Dependabot* secrets) |
 | `PAT` | secret | classic PAT with `repo` (+`workflow`) scope — must be able to merge PRs and push tags |
 | `PRIVATE_OPS_TOKEN` | secret | PAT with contents:write on `politeauthority/private-ops` |
 | `ARGOCD_KUBECONFIG` | secret | base64 of a kubeconfig that can `get`/`patch` the `kio` Application in `argocd` (`base64 -i ~/.kube/config \| tr -d '\n'`); the API server address must be reachable from the in-cluster runners |
