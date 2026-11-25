@@ -931,7 +931,20 @@ run_as_user mkdir -p "$TARGET_HOME/.config/kanshi"
 # image's /etc/xdg/labwc/autostart already started one (this user autostart runs after it).
 run_as_user bash -c "printf 'pkill wf-panel-pi\npkill -x kanshi\nkanshi &\nunclutter-xfixes --timeout 1 &\n%s/browser-start\n' '$INSTALL_DIR' > '$TARGET_HOME/.config/labwc/autostart'"
 run_as_user chmod +x "$TARGET_HOME/.config/labwc/autostart"
-echo "[5/6] labwc autostart configured"
+# Hide the mouse cursor. unclutter-xfixes only works on X11 and does nothing under the
+# Wayland labwc session, so a visible cursor can sit on the page and highlight whatever
+# is under it. Install a fully transparent cursor theme and have labwc use it.
+run_as_user mkdir -p "$TARGET_HOME/.local/share/icons"
+run_as_user rm -rf "$TARGET_HOME/.local/share/icons/kio-hidden"
+run_as_user cp -a "$SCRIPT_DIR/assets/kio-hidden" "$TARGET_HOME/.local/share/icons/kio-hidden"
+_labwc_env="$TARGET_HOME/.config/labwc/environment"
+run_as_user touch "$_labwc_env"
+if grep -q '^XCURSOR_THEME=' "$_labwc_env"; then
+  run_as_user sed -i 's/^XCURSOR_THEME=.*/XCURSOR_THEME=kio-hidden/' "$_labwc_env"
+else
+  run_as_user bash -c "echo 'XCURSOR_THEME=kio-hidden' >> '$_labwc_env'"
+fi
+echo "[5/6] labwc autostart configured (cursor hidden)"
 
 # ---------------------------------------------------------------------------
 # [6/6] Auto-login
